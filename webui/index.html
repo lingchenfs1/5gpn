@@ -39,6 +39,10 @@
   .bar { height:8px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
   .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
   #out { max-height:220px; overflow:auto; }
+  #chart { width:100%; height:200px; display:block; }
+  .res { margin-top:10px; }
+  .res .lab { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; }
+  .res .lab .sub { color:var(--mut); }
   .small { font-size:12px; }
   .hide { display:none; }
   a { color:var(--acc); }
@@ -66,6 +70,14 @@
       <div class="row"><h2 class="grow">状态</h2>
         <button onclick="loadStatus()">🔄 刷新</button></div>
       <div id="status" class="mono muted">…</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 class="grow">24 小时流量趋势</h2>
+        <button onclick="loadTraffic()">🔄 刷新</button></div>
+      <canvas id="chart"></canvas>
+      <div id="legend" class="row small" style="margin-top:8px"></div>
+      <div id="traffic_note" class="small muted" style="margin-top:6px"></div>
     </div>
 
     <div class="card">
@@ -137,27 +149,74 @@ async function connect() {
     localStorage.setItem("pgw_token", TOKEN);
     $("app").classList.remove("hide");
     $("conn").textContent = "已连接 ✅ " + BASE;
-    loadStatus(); loadRules();
+    loadStatus(); loadTraffic(); loadRules();
   } catch(e) {
     $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
   }
 }
 
+function gb(mb){ return ((mb||0)/1024).toFixed(1); }
+function fmtUptime(s){ s=s||0; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return (d?d+"天":"")+(h?h+"小时":"")+((d||h)?"":m+"分")||"0分"; }
+function resBar(label, pct, sub){ pct=Math.max(0,Math.min(100,Math.round(pct||0)));
+  return `<div class="res"><div class="lab"><span>${label}</span><span class="sub">${sub||""}</span></div>`+
+    `<div class="bar"><i style="width:${pct}%"></i></div></div>`; }
+
 async function loadStatus() {
   try {
     const s = await api("/api/status");
-    const m = s.memory||{};
-    const pct = m.total_mb ? Math.round(m.used_mb/m.total_mb*100) : 0;
+    const r = s.resources||s.memory||{};
+    const memPct  = r.total_mb ? r.used_mb/r.total_mb*100 : 0;
+    const diskPct = r.disk_total_mb ? r.disk_used_mb/r.disk_total_mb*100 : 0;
+    const cpu = r.cpu_percent||0;
+    const load = (r.load||[]).map(x=>x.toFixed(2)).join(" ");
     const sv = Object.entries(s.services||{}).map(([k,v])=>
       `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join(" ");
     $("status").innerHTML =
-      `<div class="row"><b style="color:var(--fg)">当前出口：${s.current}</b></div>`+
-      `<div class="row" style="margin-top:8px"><div class="grow">内存 ${m.used_mb||0}/${m.total_mb||0} MB（swap ${m.swap_used_mb||0}/${m.swap_total_mb||0} MB）`+
-      `<div class="bar"><i style="width:${pct}%"></i></div></div></div>`+
-      `<div class="row" style="margin-top:10px">${sv}</div>`;
+      `<div class="row"><b style="color:var(--fg)">当前出口：${s.current}</b>`+
+      `<span class="grow"></span><span class="muted small">运行 ${fmtUptime(r.uptime_sec)}</span></div>`+
+      resBar(`CPU ${cpu}%`, cpu, `${r.cpu_cores||1} 核 · 负载 ${load}`)+
+      resBar(`内存 ${r.used_mb||0} / ${r.total_mb||0} MB`, memPct, `swap ${r.swap_used_mb||0}/${r.swap_total_mb||0} MB`)+
+      resBar(`硬盘 ${gb(r.disk_used_mb)} / ${gb(r.disk_total_mb)} GB`, diskPct, Math.round(diskPct)+"%")+
+      `<div class="row" style="margin-top:12px">${sv}</div>`;
     renderExits(s.exits, s.current);
     renderPolicy(s.policy, s.exits);
   } catch(e){ log("状态获取失败："+e.message); }
+}
+
+const COLORS = ["#4f8cff","#2ecc71","#f5a623","#ff5c5c","#a06cff","#19c3c3","#ff8c42"];
+function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).toFixed(0)+" Kbps"; }
+function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
+  return b.toFixed(b<10&&i>0?1:0)+u[i]; }
+let lastTraffic=null;
+async function loadTraffic(){ try{ drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
+window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); });
+function drawChart(d){
+  lastTraffic=d;
+  const cv=$("chart"), dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth||600, H=200;
+  cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
+  const interval=d.interval_sec||300, now=d.now||Math.floor(Date.now()/1000), tStart=now-86400;
+  const series=d.series||[], pts=d.points||[];
+  const pad={l:48,r:8,t:8,b:18}, x0=pad.l, x1=W-pad.r, y0=pad.t, y1=H-pad.b;
+  const lines={}, totals={}; let maxR=0.001;
+  series.forEach(s=>{lines[s]=[];totals[s]=0;});
+  pts.forEach(p=>{ const v=p.v||{}; series.forEach(s=>{ if(v[s]){ const sum=v[s][0]+v[s][1];
+    totals[s]+=sum; const r=sum*8/interval/1e6; lines[s].push([p.t,r]); if(r>maxR)maxR=r; }});});
+  g.strokeStyle="#262b36"; g.fillStyle="#9aa4b2"; g.font="10px sans-serif"; g.lineWidth=1;
+  for(let i=0;i<=3;i++){ const y=y1-(y1-y0)*i/3; g.beginPath(); g.moveTo(x0,y); g.lineTo(x1,y); g.stroke();
+    g.fillText(fmtRate(maxR*i/3),2,y+3); }
+  for(let hh=0;hh<=24;hh+=6){ const x=x0+(x1-x0)*hh/24; g.fillText(hh===24?"现在":("-"+(24-hh)+"h"),x-10,H-4); }
+  const xOf=t=>x0+(x1-x0)*Math.max(0,Math.min(1,(t-tStart)/86400));
+  const yOf=r=>y1-(y1-y0)*Math.min(r,maxR)/maxR;
+  series.forEach((s,i)=>{ const pa=lines[s]; if(!pa.length)return; g.strokeStyle=COLORS[i%COLORS.length];
+    g.lineWidth=1.6; g.beginPath(); pa.forEach((pt,j)=>{ const x=xOf(pt[0]),y=yOf(pt[1]);
+    j?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke(); });
+  $("legend").innerHTML = series.map((s,i)=>`<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">`+
+    `${s==="server"?"本机":s} ${fmtBytes(totals[s])}</span>`).join(" ") || `<span class="muted small">暂无数据</span>`;
+  $("traffic_note").textContent = pts.length<2 ?
+    ("数据积累中（每 "+(interval/60)+" 分钟采样一次，需若干样本后成型）…") : "";
 }
 
 function renderExits(exits, cur) {

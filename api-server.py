@@ -26,6 +26,8 @@ import re
 import ssl
 import subprocess
 import sys
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("API_TOKEN", "")
@@ -42,6 +44,9 @@ EXITS_DIR = PGW_DIR + "/exits"
 POLICY_MAP = PGW_DIR + "/policy-map.conf"
 RULES_FILE = PGW_DIR + "/rules.conf"
 WG_DIR = "/etc/wireguard"
+TRAFFIC_FILE = os.environ.get("TRAFFIC_FILE", CONF_DIR + "/traffic.json")
+TRAFFIC_INTERVAL = int(re.sub(r"\D", "", os.environ.get("TRAFFIC_INTERVAL", "300")) or "300")
+TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
 
 EXIT_NAME_RE = re.compile(r"^[a-z0-9]{1,11}$")
 CAT_RE = re.compile(r"^[A-Za-z0-9_一-鿿-]{1,40}$")
@@ -145,6 +150,138 @@ def parse_check(out):
     return res
 
 
+# --- server resources (CPU / mem / disk / uptime / load) --------------------
+def cpu_percent(window=0.25):
+    def snap():
+        f = [int(x) for x in read_file("/proc/stat").splitlines()[0].split()[1:]]
+        idle = f[3] + (f[4] if len(f) > 4 else 0)
+        return sum(f), idle
+    try:
+        t1, i1 = snap()
+        time.sleep(window)
+        t2, i2 = snap()
+        dt, di = t2 - t1, i2 - i1
+        return round((1 - di / dt) * 100, 1) if dt > 0 else 0.0
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def resources():
+    r = memory()
+    try:
+        s = os.statvfs("/")
+        r["disk_total_mb"] = (s.f_blocks * s.f_frsize) // (1024 * 1024)
+        r["disk_used_mb"] = ((s.f_blocks - s.f_bfree) * s.f_frsize) // (1024 * 1024)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r["uptime_sec"] = int(float(read_file("/proc/uptime").split()[0]))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r["load"] = [float(x) for x in read_file("/proc/loadavg").split()[:3]]
+    except Exception:  # noqa: BLE001
+        pass
+    r["cpu_cores"] = os.cpu_count() or 1
+    r["cpu_percent"] = cpu_percent()
+    return r
+
+
+# --- 24h traffic ring buffer (per pgw-* exit device + the primary NIC) -------
+_traffic_lock = threading.Lock()
+
+
+def primary_iface():
+    try:
+        for line in read_file("/proc/net/route").splitlines()[1:]:
+            f = line.split()
+            if len(f) >= 2 and f[1] == "00000000":
+                return f[0]
+    except Exception:  # noqa: BLE001
+        pass
+    return "eth0"
+
+
+def read_net_dev():
+    out = {}
+    for line in read_file("/proc/net/dev").splitlines():
+        if ":" not in line:
+            continue
+        name, _, rest = line.partition(":")
+        f = rest.split()
+        if len(f) >= 9:
+            try:
+                out[name.strip()] = {"rx": int(f[0]), "tx": int(f[8])}
+            except ValueError:
+                pass
+    return out
+
+
+def tracked(dev, primary):
+    # device name -> friendly label ("server" or the exit name)
+    m = {}
+    for n in dev:
+        if n == primary:
+            m[n] = "server"
+        elif n.startswith("pgw-"):
+            m[n] = n[4:]
+    return m
+
+
+def _load_traffic():
+    try:
+        return json.load(open(TRAFFIC_FILE))
+    except Exception:  # noqa: BLE001
+        return {"interval_sec": TRAFFIC_INTERVAL, "raw": {}, "raw_ts": 0, "points": []}
+
+
+def _save_traffic(data):
+    try:
+        tmp = TRAFFIC_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, TRAFFIC_FILE)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def traffic_tick():
+    with _traffic_lock:
+        data = _load_traffic()
+        primary = primary_iface()
+        dev = read_net_dev()
+        now = int(time.time())
+        raw = data.get("raw", {})
+        # Append a delta point, but skip if there was a long gap (avoids a spike
+        # lumping all of the downtime's traffic into one bucket).
+        if raw and data.get("raw_ts") and 0 < (now - data["raw_ts"]) <= TRAFFIC_INTERVAL * 3:
+            d = {}
+            for dn, lbl in tracked(dev, primary).items():
+                if dn in raw:
+                    d[lbl] = [max(0, dev[dn]["rx"] - raw[dn]["rx"]),
+                              max(0, dev[dn]["tx"] - raw[dn]["tx"])]
+            if d:
+                data.setdefault("points", []).append({"t": now, "v": d})
+                data["points"] = data["points"][-TRAFFIC_MAX:]
+        data["raw"] = {dn: dev[dn] for dn in tracked(dev, primary)}
+        data["raw_ts"] = now
+        data["interval_sec"] = TRAFFIC_INTERVAL
+        _save_traffic(data)
+
+
+def traffic_loop():
+    try:
+        traffic_tick()      # establish a baseline immediately
+    except Exception:  # noqa: BLE001
+        pass
+    while True:
+        time.sleep(TRAFFIC_INTERVAL)
+        try:
+            traffic_tick()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
@@ -197,9 +334,19 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             exits, cur = list_exits()
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in SERVICES}
+            res = resources()
             return self._send(200, {"ok": True, "current": cur, "exits": exits,
-                                    "memory": memory(), "services": services,
+                                    "resources": res, "memory": res, "services": services,
                                     "policy": policy_map()})
+        if path == "/api/traffic":
+            with _traffic_lock:
+                data = _load_traffic()
+            cutoff = int(time.time()) - 24 * 3600
+            pts = [p for p in data.get("points", []) if p.get("t", 0) >= cutoff]
+            series = sorted({k for p in pts for k in p.get("v", {})})
+            return self._send(200, {"ok": True, "now": int(time.time()),
+                                    "interval_sec": data.get("interval_sec", TRAFFIC_INTERVAL),
+                                    "series": series, "points": pts})
         if path == "/api/exits":
             exits, cur = list_exits()
             return self._send(200, {"ok": True, "current": cur, "exits": exits})
@@ -279,6 +426,7 @@ def main():
     except Exception as e:  # noqa: BLE001
         sys.stderr.write("TLS cert load failed (%s / %s): %s\n" % (CERT, KEY, e))
         sys.exit(1)
+    threading.Thread(target=traffic_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
     sys.stderr.write("proxy-gateway-api listening on %s:%d (TLS)\n" % (BIND, PORT))
