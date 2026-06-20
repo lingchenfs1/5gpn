@@ -1015,7 +1015,7 @@ system_tuning() {
         sy_file_max=1048576;  sy_nr_open=1048576; sy_netdev=16384
         sy_somaxconn=4096;    sy_conntrack_max=131072
         sy_tcp_syn=8192;      sy_tcp_orphans=8192
-        sy_buf_max=16777216;  sy_swappiness=10
+        sy_buf_max=16777216;  sy_swappiness=60
     else
         sy_file_max=10240000; sy_nr_open=2097152;  sy_netdev=65536
         sy_somaxconn=10240000; sy_conntrack_max=10240000
@@ -1086,6 +1086,13 @@ EOF
         {
             echo "net.ipv4.tcp_mem=$((mem_pages / 100 * 12)) $((mem_pages / 100 * 50)) $((mem_pages / 100 * 70))"
         } >> /etc/sysctl.d/99-proxy-gateway.conf
+    fi
+
+    # /etc/sysctl.conf is applied AFTER /etc/sysctl.d/* on Debian/systemd, so a
+    # stray vm.swappiness there (common in VPS images) would silently override
+    # our drop-in. Neutralize it so our value actually takes effect.
+    if grep -qE '^[[:space:]]*vm\.swappiness[[:space:]]*=' /etc/sysctl.conf 2>/dev/null; then
+        sed -i -E 's/^([[:space:]]*vm\.swappiness[[:space:]]*=)/# disabled by proxy-gateway (see 99-proxy-gateway.conf): \1/' /etc/sysctl.conf
     fi
 
     sysctl --system >/dev/null
