@@ -125,7 +125,7 @@ def parse_rule_list(text):
         line = raw.split("#", 1)[0].strip()
         if not line or line.startswith(("!", ";")) or line.lower().startswith("payload"):
             continue
-        line = line.lstrip("- ").strip()
+        line = line.lstrip("- ").strip().strip("'\"")   # YAML list / quoted entries
         if "," in line:
             parts = [p.strip().strip("'\"") for p in line.split(",")]
             t, v = parts[0].upper(), (parts[1] if len(parts) > 1 else "")
