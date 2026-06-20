@@ -29,6 +29,7 @@ EXITS_DIR="/etc/proxy-gateway/exits"
 RULES_FILE="/etc/proxy-gateway/rules.conf"
 POLICY_MAP="/etc/proxy-gateway/policy-map.conf"
 KEEP_FILE="/etc/proxy-gateway/keep-categories"
+DIRECT_FILE="/etc/proxy-gateway/direct-categories"
 RULESET_CACHE="/etc/proxy-gateway/rulesets"
 SINGBOX_BIN="/opt/proxy-gateway/bin/sing-box"
 SINGBOX_CFG_GEN="/opt/proxy-gateway/bin/singbox-exit-config.py"
@@ -1773,10 +1774,17 @@ import_rules() {
         mkdir -p "$(dirname "${KEEP_FILE}")"; printf '%s' "$keep" > "${KEEP_FILE}"
         info "Simplifying categories — keeping: ${keep} (others -> Proxy/direct/block)"
     fi
+    # Categories forced to direct (e.g. 小红书,bilibili,iqiyi). Remembered too.
+    local direct="${PGW_DIRECT_CATEGORIES:-}"
+    [[ -z "$direct" && -f "${DIRECT_FILE}" ]] && direct="$(cat "${DIRECT_FILE}" 2>/dev/null)"
+    if [[ -n "$direct" ]]; then
+        mkdir -p "$(dirname "${DIRECT_FILE}")"; printf '%s' "$direct" > "${DIRECT_FILE}"
+        info "Forcing to direct: ${direct}"
+    fi
 
     info "Converting rule list..."
     local summary
-    summary="$(PGW_KEEP_CATEGORIES="$keep" python3 "${RULES_IMPORT}" "$src" 2>/tmp/pgw-import.err >"${RULES_FILE}.tmp")" || true
+    summary="$(PGW_KEEP_CATEGORIES="$keep" PGW_DIRECT_CATEGORIES="$direct" python3 "${RULES_IMPORT}" "$src" 2>/tmp/pgw-import.err >"${RULES_FILE}.tmp")" || true
     if [[ ! -s "${RULES_FILE}.tmp" ]]; then
         err "Conversion produced no rules:"; sed 's/^/    /' /tmp/pgw-import.err >&2; rm -f "${RULES_FILE}.tmp"; exit 1
     fi

@@ -288,6 +288,7 @@ EOF
 - **规则类型**：`DOMAIN` / `DOMAIN-SUFFIX` / `DOMAIN-KEYWORD` / `IP-CIDR` / `GEOSITE` / `GEOIP` / `RULE-SET` / `FINAL`。
 - **策略**：任意已配置的出口名（socks/ss/wireguard）、`direct`（本机直出）、`block`（拒绝）。
 - **外部规则集**：`RULE-SET` 支持**本地文件**和**远程 URL**；纯文本/Clash 域名表会自动解析为 sing-box 规则集，`.srs` 直接引用。`GEOSITE/GEOIP` 用官方 sing-geosite/sing-geoip 的 `.srs`。
+- 强制某些分类直连：导入时设 `PGW_DIRECT_CATEGORIES="小红书,bilibili,iqiyi"`（会被记住），这些分类的规则会标成直连而不进代理。
 - 改了出口或规则后，重新 `--set-rules` 即可刷新（若 `smart` 正在用会自动重载）。
 - **Telegram Bot**：🧭 智能分流 / `/rules` —— 查看、整体设置（粘贴）、追加一条、删除一条、一键启用，均经 sing-box 校验。
 

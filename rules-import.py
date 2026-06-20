@@ -49,10 +49,15 @@ def norm_category(p):
 # Optional simplification: keep only these categories distinct; collapse the
 # rest into direct / block / Proxy. Set PGW_KEEP_CATEGORIES="AI" for "AI + 其它代理".
 _KEEP = {c.strip() for c in re.split(r"[,\s]+", os.environ.get("PGW_KEEP_CATEGORIES", "")) if c.strip()}
+# Categories forced to DIRECT (e.g. domestic services like 小红书/bilibili/iqiyi).
+# Matched case-insensitively; takes priority over keep/Proxy collapse.
+_DIRECT = {c.strip().lower() for c in re.split(r"[,\s]+", os.environ.get("PGW_DIRECT_CATEGORIES", "")) if c.strip()}
 
 
 def category_of(policy):
     cat = norm_category(policy)
+    if cat.lower() in _DIRECT:
+        return "direct"
     if not _KEEP or cat in _KEEP:
         return cat
     low = cat.lower()
