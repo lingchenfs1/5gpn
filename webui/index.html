@@ -2,50 +2,80 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>5gpn 控制面板</title>
 <style>
   :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
           --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
-  .wrap { max-width:760px; margin:0 auto; padding:16px; }
-  h1 { font-size:18px; margin:8px 0 16px; }
-  h2 { font-size:14px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
+         -webkit-tap-highlight-color:transparent;
+         font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:16px;
+          padding-left:max(16px,env(safe-area-inset-left)); padding-right:max(16px,env(safe-area-inset-right));
+          padding-bottom:max(16px,env(safe-area-inset-bottom)); }
+  h1 { font-size:19px; margin:6px 0 16px; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .row + .row { margin-top:8px; }
-  input, textarea, select, button { font:inherit; color:var(--fg); background:#11141a;
-    border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  input, textarea, select, button { font-family:inherit; font-size:16px; /* >=16px stops iOS zoom-on-focus */
+    color:var(--fg); background:#11141a; border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
   input, select { min-width:0; }
-  input[type=text], input[type=password] { flex:1; }
-  textarea { width:100%; min-height:120px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
-  button { cursor:pointer; background:#222836; border-color:#2f3645; }
-  button:hover { border-color:var(--acc); }
+  input[type=text], input[type=password] { flex:1 1 200px; }
+  select { min-height:44px; }
+  textarea { width:100%; min-height:130px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; }
+  button { cursor:pointer; background:#222836; border-color:#2f3645; min-height:44px; padding:10px 16px;
+    touch-action:manipulation; transition:transform .05s ease; }
+  button:active { transform:scale(.97); }
+  @media (hover:hover) { button:hover { border-color:var(--acc); } }
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
   button.danger { border-color:#5a2a2a; color:#ff9b9b; }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; }
   .pill.on { color:var(--ok); border-color:#1f6b3a; }
   .pill.off { color:var(--bad); border-color:#5a2a2a; }
-  .exit { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .exit { display:flex; align-items:center; gap:8px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
   .exit:first-child { border-top:none; }
   .exit .name { font-weight:600; }
-  .exit .meta { color:var(--mut); font-size:12px; }
+  .exit .meta { color:var(--mut); font-size:12px; word-break:break-all; }
   .grow { flex:1; }
   .muted { color:var(--mut); }
   .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
-  .bar { height:8px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
+  .bar { height:9px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
   .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
   #out { max-height:220px; overflow:auto; }
   #chart { width:100%; height:200px; display:block; }
-  .res { margin-top:10px; }
-  .res .lab { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; }
-  .res .lab .sub { color:var(--mut); }
+  #conn { word-break:break-all; }
+  .res { margin-top:12px; }
+  .res .lab { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; gap:8px; }
+  .res .lab .sub { color:var(--mut); text-align:right; }
   .small { font-size:12px; }
   .hide { display:none; }
   a { color:var(--acc); }
+
+  /* ---- phones ---- */
+  @media (max-width:560px) {
+    .wrap { padding:12px; padding-bottom:max(20px,env(safe-area-inset-bottom)); }
+    .card { padding:12px; margin-bottom:12px; }
+    h1 { font-size:18px; }
+    #chart { height:180px; }
+    /* full-width inputs and tap-friendly buttons that share a row */
+    input[type=text], input[type=password] { flex:1 1 100%; }
+    .card .row > button { flex:1 1 auto; }
+    .card > .row:first-child > button { flex:0 0 auto; }   /* keep header refresh small */
+    .exit { gap:6px 8px; }
+    .exit .name { order:1; flex:1 1 100%; }
+    .exit .meta { order:2; flex:1 1 100%; }
+    .exit button { order:3; flex:1 1 calc(50% - 4px); }
+    .exit .pill { order:3; margin-left:auto; }
+    .exit select { order:3; flex:1 1 100%; }
+  }
 </style>
 </head>
 <body>
