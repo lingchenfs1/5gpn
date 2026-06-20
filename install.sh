@@ -1607,11 +1607,16 @@ add_exit() {
         cat > "$tmp"
     fi
 
-    # A proxy URI -> socks/shadowsocks exit via sing-box.
+    # A proxy URI -> socks/shadowsocks exit via sing-box. Grab the WHOLE first
+    # scheme line (not just a non-space token) so a single-line password can
+    # contain spaces and other special chars; only CR / surrounding space trimmed.
     local uri type px_user px_pass px_rdns
-    uri="$(grep -oE '^(ss|socks5h|socks5|socks)://[^[:space:]]+' "$tmp" | head -n1)"
+    uri="$(grep -iE '^[[:space:]]*(ss|socks5h|socks5|socks)://' "$tmp" | head -n1 | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
     if [[ -n "$uri" ]]; then
-        case "$uri" in
+        # Classify by a lowercased copy (scheme may be upper/mixed case); the
+        # original "$uri" is passed through unchanged so the password keeps its case.
+        local uri_lc; uri_lc="$(printf '%s' "$uri" | tr '[:upper:]' '[:lower:]')"
+        case "$uri_lc" in
             ss://*)                            type=shadowsocks ;;
             socks5h://*|socks5://*|socks://*)  type=socks ;;
         esac

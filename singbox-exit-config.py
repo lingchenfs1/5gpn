@@ -3,8 +3,8 @@
 Generate a sing-box config for one proxy-gateway egress exit from a proxy URI.
 
 Supports:
-  socks5://[user:pass@]host:port
-  socks://[user:pass@]host:port          (alias of socks5)
+  socks5://[user:pass@]host:port         (password may contain @ : / # ? % space
+  socks://[user:pass@]host:port           literally — parsed from the rightmost @)
   ss://...   Shadowsocks (SIP002 and legacy base64), including Shadowsocks-2022
              methods (2022-blake3-aes-128-gcm, 2022-blake3-aes-256-gcm,
              2022-blake3-chacha20-poly1305).
@@ -115,11 +115,25 @@ def decode_ss_userinfo(userinfo):
 
 
 def parse_socks(uri):
-    u = urlparse(uri)
-    if not u.hostname or not u.port:
-        die("socks5:// missing host or port")
-    return u.hostname, u.port, (unquote(u.username) if u.username else None), \
-        (unquote(u.password) if u.password else None)
+    # Parse manually (not urlparse) so special characters in the password
+    # (@ : / # ? % space etc.) are taken LITERALLY on a single line — no URL
+    # encoding required. host:port is always the last "@"-separated segment, so
+    # splitting on the rightmost "@" is unambiguous regardless of password chars.
+    rest = re.sub(r"^socks(?:5h|5)?://", "", uri, flags=re.I)
+    if "@" in rest:
+        userinfo, hostport = rest.rsplit("@", 1)
+    else:
+        userinfo, hostport = "", rest
+    host, port = parse_hostport(hostport)
+    user = password = None
+    if userinfo:
+        # Username is everything up to the FIRST ":"; the rest is the password
+        # (so passwords may contain ":"). Taken literally — not percent-decoded.
+        if ":" in userinfo:
+            user, password = userinfo.split(":", 1)
+        else:
+            user = userinfo
+    return host, port, (user or None), (password or None)
 
 
 def main():

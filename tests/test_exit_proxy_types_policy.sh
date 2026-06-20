@@ -28,6 +28,12 @@ grep -q '"username": "u"' <<<"$out"         || fail "socks5 URI auth must set us
 grep -q '"password": "p"' <<<"$out"         || fail "socks5 URI auth must set password"
 grep -q '"interface_name": "pgw-us"' <<<"$out" || fail "TUN device must be pgw-<name>"
 
+# socks5 single-line password with special chars (@ : / # ? % space) verbatim.
+out="$(python3 "${gen}" us 'socks5://myuser:p@ss:w/r#d?x %z@198.51.100.7:1080')"
+grep -q '"server": "198.51.100.7"' <<<"$out"      || fail "must parse host:port from the rightmost @"
+grep -q '"username": "myuser"' <<<"$out"          || fail "username = up to first colon"
+grep -Fq '"password": "p@ss:w/r#d?x %z"' <<<"$out" || fail "single-line special-char password must be literal"
+
 # socks5 out-of-band credentials (special chars, no URL-encoding) must win.
 out="$(PGW_USER='bob' PGW_PASS='p@ss:w/rd#1?' python3 "${gen}" us 'socks5://1.2.3.4:1080')"
 grep -q '"username": "bob"' <<<"$out"        || fail "PGW_USER must set the socks username"
@@ -67,8 +73,9 @@ for m in 'ensure_singbox()' 'exit_type()' 'exit_up()' 'exit_down()' 'install_sin
 done
 [[ "${install_body}" == *'proxy-gateway-singbox@'* ]] || fail "install.sh must define the sing-box systemd template"
 [[ "${install_body}" == *'singbox-exit-config.py'* ]] || fail "install.sh must install the URI config generator"
-# add_exit must branch on a proxy URI vs WireGuard.
-[[ "${install_body}" == *"grep -oE '^(ss|socks5h|socks5|socks)://"* ]] || fail "add_exit must detect socks/ss URIs"
+# add_exit must branch on a proxy URI vs WireGuard (whole-line grab so passwords
+# may contain special chars / spaces).
+[[ "${install_body}" == *"grep -iE '^[[:space:]]*(ss|socks5h|socks5|socks)://"* ]] || fail "add_exit must detect socks/ss URIs"
 # apply-exit helper must be type-aware (start sing-box for socks/ss exits).
 [[ "${install_body}" == *'proxy-gateway-singbox@${current}.service'* ]] || fail "apply-exit helper must start sing-box for socks/ss exits"
 # routing layer unchanged: still routes via the pgw-<name> device.

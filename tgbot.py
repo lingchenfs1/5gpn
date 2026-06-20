@@ -792,9 +792,10 @@ def handle_message(msg):
              "3️⃣ <b>WireGuard</b>\n"
              "• 整段配置（exit-server-setup.sh 生成），需含 <code>[Interface]</code> 和 <code>[Peer]</code> 两节\n\n"
 
-             "💡 SOCKS5 密码含 <code>@ : / #</code> 空格 等特殊字符时，改用多行更稳（无需转义）：\n"
-             "<code>socks5://host:端口\nuser: 账号\npass: 密码\nremote-dns: on</code>\n"
-             "（user / pass / remote-dns 三行按需保留或删除）\n\n"
+             "💡 密码含 <code>@ : / # ? % 空格</code> 等特殊字符<b>直接一行原样粘贴即可</b>，无需转义/编码"
+             "（从最后一个 <code>@</code> 之后识别 host:端口，前面整段都当“账号:密码”，账号取第一个冒号之前）。\n"
+             "仅当<b>账号本身就含冒号</b>这种极少数情况，才需要多行写法：\n"
+             "<code>socks5://host:端口\nuser: 账号\npass: 密码\nremote-dns: on</code>\n\n"
 
              "发送 /cancel 取消。" % html.escape(name))
         return
