@@ -775,14 +775,28 @@ def handle_message(msg):
             return
         PENDING[chat_id] = {"action": "add_exit_config", "name": name}
         send(chat_id,
-             "好的，出口名 <b>%s</b>。现在发出口配置，三选一：\n"
-             "• WireGuard：整段 [Interface]/[Peer]（exit-server-setup.sh 生成）\n"
-             "• SOCKS5：<code>socks5://用户:密码@host:port</code>（无鉴权则去掉用户:密码@）\n"
-             "• SOCKS5 远程DNS：把 <code>socks5://</code> 换成 <code>socks5h://</code>\n"
-             "• Shadowsocks / SS2022：<code>ss://...</code>\n\n"
-             "若 SOCKS5 密码含 @ : / # 等特殊字符，改成多行发送（可加 <code>remote-dns: on</code>）：\n"
-             "<code>socks5://host:port\nuser: 账号\npass: 密码</code>\n"
-             "⚠️ 含私钥/密码，会经 Telegram 传输。\n发送 /cancel 取消。" % html.escape(name))
+             "📝 出口名 <b>%s</b> ✅\n"
+             "现在把节点配置发给我，按类型选一种格式（含密钥/密码，会经 Telegram 传输）：\n\n"
+
+             "1️⃣ <b>SOCKS5</b>\n"
+             "• 无鉴权：<code>socks5://host:端口</code>\n"
+             "• 带账号密码：<code>socks5://用户名:密码@host:端口</code>\n"
+             "• 远程 DNS（域名在出口解析、防污染）：把 <code>socks5://</code> 换成 <code>socks5h://</code>\n\n"
+
+             "2️⃣ <b>Shadowsocks / SS2022</b>\n"
+             "• 标准 SIP002：<code>ss://加密方式:密码@host:端口</code>\n"
+             "　· SS2022 例：<code>ss://2022-blake3-aes-128-gcm:密码@host:端口</code>\n"
+             "　· 普通 例：<code>ss://aes-256-gcm:密码@host:端口</code>\n"
+             "• 机场/客户端给的 <code>ss://</code> 分享链接（base64 那种）可直接整条粘贴\n\n"
+
+             "3️⃣ <b>WireGuard</b>\n"
+             "• 整段配置（exit-server-setup.sh 生成），需含 <code>[Interface]</code> 和 <code>[Peer]</code> 两节\n\n"
+
+             "💡 SOCKS5 密码含 <code>@ : / #</code> 空格 等特殊字符时，改用多行更稳（无需转义）：\n"
+             "<code>socks5://host:端口\nuser: 账号\npass: 密码\nremote-dns: on</code>\n"
+             "（user / pass / remote-dns 三行按需保留或删除）\n\n"
+
+             "发送 /cancel 取消。" % html.escape(name))
         return
     if state and state.get("action") == "add_exit_config":
         config = msg.get("text") or ""
