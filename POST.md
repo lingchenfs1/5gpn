@@ -34,19 +34,19 @@
 |------|-----------|------|
 | dnsdist (PowerDNS) | 53、853(DoT) | 智能 DNS 分流 + DoT 服务 |
 | sniproxy | TCP 80/443 | SNI 透明代理(C 语言,极快) |
-| quic-proxy(自研 Go) | UDP 443 | QUIC/HTTP3 的 SNI 透明代理 |
-| china-dns-race-proxy(自研 Go) | 本地 | 国内多个 DNS 并发竞速 + fallback |
+| quic-proxy(Go) | UDP 443 | QUIC/HTTP3 的 SNI 透明代理 |
+| china-dns-race-proxy(Go) | 本地 | 国内多个 DNS 并发竞速 + fallback |
 | sing-box | TUN | 给 SOCKS5/SS 出口做 tun2socks |
 
 ## 三、几个比较满意的设计
 
 ### 1. 国内 DNS 并发竞速
 
-国内 DNS 经常单个不通导致页面卡半天。自研的竞速代理同时并发查多个国内公共 DNS 的 **UDP 53**;`150ms` 还没结果就并发改走 **国内 TCP 53**;`750ms` 还不行才启用海外 fallback。哪个先回用哪个,体验顺滑很多。
+国内 DNS 经常单个不通导致页面卡半天。这个 DNS 竞速代理同时并发查多个国内公共 DNS 的 **UDP 53**;`150ms` 还没结果就并发改走 **国内 TCP 53**;`750ms` 还不行才启用海外 fallback。哪个先回用哪个,体验顺滑很多。
 
-### 2. QUIC 透明代理(自研)
+### 2. QUIC 透明代理
 
-原版 sniproxy 不支持 UDP/QUIC。于是用 Go 标准库写了个极简 QUIC SNI 代理:监听 UDP 443 → 按 RFC 9000 解密 QUIC Initial 包 → 提取 ClientHello 里的 SNI → 建立到真实后端的 UDP 会话双向转发。纯标准库、无第三方依赖。
+原版 sniproxy 不支持 UDP/QUIC。这里用一个 Go 标准库实现的极简 QUIC SNI 代理:监听 UDP 443 → 按 RFC 9000 解密 QUIC Initial 包 → 提取 ClientHello 里的 SNI → 建立到真实后端的 UDP 会话双向转发。纯标准库、无第三方依赖。
 
 热路径还做了优化:已建立的会话 **内联转发**(不为每个 UDP 包开 goroutine),只有新会话建立才异步,顺手修了一个并发首包会泄漏后端连接的 race。
 

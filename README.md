@@ -28,8 +28,8 @@
 | 组件 | 协议/端口 | 作用 |
 |------|-----------|------|
 | sniproxy (dlundquist) | TCP 80/443 | SNI 透明代理（HTTP/HTTPS） |
-| quic-proxy (自研 Go) | UDP 443 | QUIC SNI 透明代理（HTTP/3） |
-| china-dns-race-proxy (自研 Go) | TCP/UDP 127.0.0.1:5301 | ChinaList 上游 DNS 并发竞速与 fallback |
+| quic-proxy (Go) | UDP 443 | QUIC SNI 透明代理（HTTP/3） |
+| china-dns-race-proxy (Go) | TCP/UDP 127.0.0.1:5301 | ChinaList 上游 DNS 并发竞速与 fallback |
 | dnsdist (PowerDNS) | TCP/UDP 53, TCP 853 | 智能 DNS + DoT 服务 |
 | Certbot | - | Let's Encrypt 证书自动申请与续期 |
 
@@ -339,7 +339,7 @@ http://<安装生成的域名>:8111/ios-dot.mobileconfig
 使用 [dlundquist/sniproxy](https://github.com/dlundquist/sniproxy)（C 语言），基于 SNI/Host 头做 Layer-4/7 透明转发，不解密 TLS，性能极高。
 
 ### UDP/QUIC 代理
-原版 sniproxy 已于 2023 年弃用，且不支持 UDP/QUIC。本项目附带一个**极简的 Go QUIC SNI 代理**（`quic-proxy.go`），它：
+原版 sniproxy 已于 2023 年弃用，且不支持 UDP/QUIC。本项目包含一个 **Go 实现的极简 QUIC SNI 代理**（`quic-proxy.go`），它：
 - 监听 UDP 443
 - 使用标准 RFC 9000 算法解密 QUIC Initial 包
 - 提取 TLS ClientHello 中的 SNI
