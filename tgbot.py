@@ -617,7 +617,7 @@ def policy_menu():
     rows = []
     pm = _policy_map()
     if not pm:
-        rows.append([{"text": "（还没有分类，先在服务器 --import-surge）", "callback_data": "menu:rules"}])
+        rows.append([{"text": "（还没有分类，先在服务器 --import-rules）", "callback_data": "menu:rules"}])
     for i, (cat, tgt) in enumerate(pm):
         rows.append([{"text": "%s → %s" % (cat, tgt), "callback_data": "pol:%d" % i}])
     rows.append([{"text": "« 返回", "callback_data": "menu:rules"}])
@@ -775,7 +775,7 @@ def handle_callback(cb):
     elif data == "rules:set":
         PENDING[chat_id] = {"action": "rules_set"}
         send(chat_id,
-             "粘贴<b>整份</b>分流规则（Surge 风格，首行优先）。示例：\n"
+             "粘贴<b>整份</b>分流规则（首行优先）。示例：\n"
              "<pre>DOMAIN-SUFFIX,google.com,att\nDOMAIN-KEYWORD,telegram,att\n"
              "GEOSITE,netflix,att\nGEOIP,cn,direct\n"
              "RULE-SET,https://example.com/list.txt,att\nFINAL,att</pre>\n"

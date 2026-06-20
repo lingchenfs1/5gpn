@@ -2,7 +2,7 @@
 
 > **A server-side transparent proxy gateway.** Smart DNS (dnsdist DoT) + SNI/QUIC
 > transparent proxy, switchable multi-protocol egress (WireGuard / SOCKS5 /
-> Shadowsocks / SS2022), Surge-style smart routing, and a Telegram control bot.
+> Shadowsocks / SS2022), rule-based smart routing, and a Telegram control bot.
 > Clients just point their DNS at it — no client app needed. Runs on a 512 MB VPS.
 
 本项目基于 5G NPN + N6 互通架构，在服务器端部署高性能透明反代基础设施，为终端提供智能 DNS 解析与 SNI 透明代理服务。
@@ -259,9 +259,9 @@ curl --interface pgw-us -4 -s https://api.ipify.org; echo    # 应为出口的 I
 
 可以混合预存多个不同类型的出口（如 WireGuard `us`、SOCKS5 `jp`、SS2022 `hk`），用 `--set-exit <名字>` 一键切换；切换时会自动停掉上一个出口以省资源。当前出口记录在 `/opt/proxy-gateway/etc/current-exit`，开机由 `proxy-gateway-exit.service` 自动恢复。这些操作在 Telegram Bot 上同样可做（🌐 出口 → ➕ 添加出口，粘贴配置或 URI）。
 
-### 智能分流（Surge 风格规则 / `smart` 出口）
+### 智能分流（规则列表 / `smart` 出口）
 
-除了"所有代理流量走同一个出口"，还可以用 **`smart` 出口**按域名把流量分到不同出口 / 直连 / 拒绝。它由一个 Surge 风格规则文件驱动，底层是 sing-box 多 outbound 路由 + `rule_set`。
+除了"所有代理流量走同一个出口"，还可以用 **`smart` 出口**按域名把流量分到不同出口 / 直连 / 拒绝。它由一个 规则列表文件驱动，底层是 sing-box 多 outbound 路由 + `rule_set`。
 
 ```bash
 # 1) 写规则文件（首行匹配优先）：
@@ -287,16 +287,16 @@ EOF
 
 - **规则类型**：`DOMAIN` / `DOMAIN-SUFFIX` / `DOMAIN-KEYWORD` / `IP-CIDR` / `GEOSITE` / `GEOIP` / `RULE-SET` / `FINAL`。
 - **策略**：任意已配置的出口名（socks/ss/wireguard）、`direct`（本机直出）、`block`（拒绝）。
-- **外部规则集**：`RULE-SET` 支持**本地文件**和**远程 URL**；纯文本/Clash/Surge 域名表会自动解析为 sing-box 规则集，`.srs` 直接引用。`GEOSITE/GEOIP` 用官方 sing-geosite/sing-geoip 的 `.srs`。
+- **外部规则集**：`RULE-SET` 支持**本地文件**和**远程 URL**；纯文本/Clash 域名表会自动解析为 sing-box 规则集，`.srs` 直接引用。`GEOSITE/GEOIP` 用官方 sing-geosite/sing-geoip 的 `.srs`。
 - 改了出口或规则后，重新 `--set-rules` 即可刷新（若 `smart` 正在用会自动重载）。
 - **Telegram Bot**：🧭 智能分流 / `/rules` —— 查看、整体设置（粘贴）、追加一条、删除一条、一键启用，均经 sing-box 校验。
 
-#### 导入 Surge 规则 + 分类→出口映射
+#### 导入规则列表 + 分类→出口映射
 
-可以直接导入一份 Surge `[Rule]` 规则，自动转换并按**分类**路由：
+可以直接导入一份规则列表，自动转换并按**分类**路由：
 
 ```bash
-./install.sh --import-surge /path/to/rule.conf   # 转换 + 播种映射表 + 重建
+./install.sh --import-rules /path/to/rule.conf   # 转换 + 播种映射表 + 重建
 ./install.sh --show-policy                        # 查看 分类=出口 映射
 ./install.sh --set-policy Netflix hk              # 某分类改走某出口
 ```
@@ -318,7 +318,7 @@ EOF
 | `exit-server-setup.sh` | 远端出口 VPS 一键配置脚本（WireGuard + NAT） |
 | `singbox-exit-config.py` | 把 socks5://、ss:// URI 转成 sing-box 出口配置 |
 | `singbox-router-config.py` | 把分流规则 + 分类映射转成 sing-box 智能分流（`smart`）配置 |
-| `surge-to-rules.py` | 把 Surge `[Rule]` 规则转换为网关分流规则（按分类） |
+| `rules-import.py` | 把规则列表转换为网关分流规则（按分类） |
 | `tgbot.py` | Telegram 控制 Bot（标准库实现） |
 | `ios-http.py` | iOS 描述文件按需 HTTP 响应器（socket 激活） |
 | `quic-proxy.go` | QUIC SNI UDP 代理源码 |

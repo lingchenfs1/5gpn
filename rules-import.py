@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Convert a Surge [Rule] ruleset into the gateway's smart-routing rules.
+Convert a rule list into the gateway's smart-routing rules.
 
-The output keeps the original Surge *policy group* as the rule's "category"
+The output keeps the original *policy group* as the rule's "category"
 (e.g. AI, Netflix, dir). A separate policy-map (category -> exit/direct/block,
 edited on the bot) resolves categories to real egress targets at config-gen
 time. Server-meaningless matchers are dropped; OR/AND groups are flattened to
 their domain/IP members.
 
-Usage:  surge-to-rules.py <surge-rule.conf>     (emits gateway rules on stdout)
+Usage:  rules-import.py <rule-list-file>     (emits gateway rules on stdout)
 Also prints, on stderr, a summary and the unique category list (CATEGORIES=...).
 """
 import os
@@ -108,7 +108,7 @@ def emit(typ, value, category, sink):
 
 def main():
     if len(sys.argv) != 2:
-        sys.stderr.write("usage: surge-to-rules.py <surge-rule.conf>\n")
+        sys.stderr.write("usage: rules-import.py <rule-list-file>\n")
         sys.exit(1)
 
     rules, cats = [], {}

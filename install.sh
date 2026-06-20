@@ -33,7 +33,7 @@ RULESET_CACHE="/etc/proxy-gateway/rulesets"
 SINGBOX_BIN="/opt/proxy-gateway/bin/sing-box"
 SINGBOX_CFG_GEN="/opt/proxy-gateway/bin/singbox-exit-config.py"
 SINGBOX_ROUTER_GEN="/opt/proxy-gateway/bin/singbox-router-config.py"
-SURGE_CONV="/opt/proxy-gateway/bin/surge-to-rules.py"
+RULES_IMPORT="/opt/proxy-gateway/bin/rules-import.py"
 SINGBOX_VERSION_DEFAULT="1.10.7"
 GFWLIST_URL="https://github.com/gfwlist/gfwlist/raw/master/gfwlist.txt"
 CHINALIST_URL="https://github.com/felixonmars/dnsmasq-china-list/raw/master/accelerated-domains.china.conf"
@@ -168,12 +168,12 @@ Options:
   --del-exit <name>
                  Remove a configured exit.
   --set-rules [file]
-                 Install Surge-like routing rules (file/stdin/paste) for the
+                 Install routing rules (file/stdin/paste) for the
                  'smart' exit: route domains to exits / direct / block, with
                  local lists, remote rule-set URLs, geosite/geoip.
   --show-rules   Print the current smart-routing rules.
-  --import-surge <surge-rule.conf>
-                 Convert a Surge [Rule] ruleset into smart rules (categories),
+  --import-rules <rule-list-file>
+                 Convert a rule list into smart rules (categories),
                  seed the category->exit policy map, and rebuild the router.
   --set-policy <category> <exit|direct|block>
                  Map a rule category to an egress target, then rebuild.
@@ -1513,8 +1513,8 @@ setup_exit_switching() {
         install -m 0755 "${SCRIPT_DIR}/singbox-exit-config.py" "${SINGBOX_CFG_GEN}"
     [[ -f "${SCRIPT_DIR}/singbox-router-config.py" ]] && \
         install -m 0755 "${SCRIPT_DIR}/singbox-router-config.py" "${SINGBOX_ROUTER_GEN}"
-    [[ -f "${SCRIPT_DIR}/surge-to-rules.py" ]] && \
-        install -m 0755 "${SCRIPT_DIR}/surge-to-rules.py" "${SURGE_CONV}"
+    [[ -f "${SCRIPT_DIR}/rules-import.py" ]] && \
+        install -m 0755 "${SCRIPT_DIR}/rules-import.py" "${RULES_IMPORT}"
 
     install_apply_exit_helper
 
@@ -1693,7 +1693,7 @@ set_exit() {
 # Regenerate the 'smart' router config from RULES_FILE + POLICY_MAP, validate it
 # with sing-box, and install it (reloading if smart is the active exit).
 regen_smart() {
-    [[ -f "${RULES_FILE}" ]] || { err "No rules yet. Use --set-rules or --import-surge first."; exit 1; }
+    [[ -f "${RULES_FILE}" ]] || { err "No rules yet. Use --set-rules or --import-rules first."; exit 1; }
     [[ -f "${SINGBOX_ROUTER_GEN}" ]] || { err "Router generator missing: ${SINGBOX_ROUTER_GEN}"; exit 1; }
     ensure_proxy_user
     mkdir -p "${EXITS_DIR}" "${RULESET_CACHE}"; chmod 700 "${EXITS_DIR}"
@@ -1743,7 +1743,7 @@ set_rules() {
     elif [[ ! -t 0 ]]; then
         cat > "$tmp"
     else
-        echo "Paste Surge-like routing rules for the 'smart' exit, end with Ctrl-D:"
+        echo "Paste routing rules for the 'smart' exit, end with Ctrl-D:"
         cat > "$tmp"
     fi
     install -m 644 "$tmp" "${RULES_FILE}"; rm -f "$tmp"
@@ -1751,12 +1751,12 @@ set_rules() {
     regen_smart
 }
 
-# Import a full Surge [Rule] ruleset: convert -> rules.conf, seed the policy map,
+# Import a full rule list: convert -> rules.conf, seed the policy map,
 # then rebuild the smart router.
-import_surge() {
+import_rules() {
     local src="${1:-}"
-    [[ -n "$src" && -f "$src" ]] || { err "Usage: $0 --import-surge <surge-rule.conf>"; exit 1; }
-    [[ -f "${SURGE_CONV}" ]] || { err "Surge converter missing: ${SURGE_CONV}"; exit 1; }
+    [[ -n "$src" && -f "$src" ]] || { err "Usage: $0 --import-rules <rule-list-file>"; exit 1; }
+    [[ -f "${RULES_IMPORT}" ]] || { err "rule converter missing: ${RULES_IMPORT}"; exit 1; }
     ensure_proxy_user
     mkdir -p "${EXITS_DIR}" "${RULESET_CACHE}"
 
@@ -1770,14 +1770,14 @@ import_surge() {
         info "Simplifying categories — keeping: ${keep} (others -> Proxy/direct/block)"
     fi
 
-    info "Converting Surge ruleset..."
+    info "Converting rule list..."
     local summary
-    summary="$(PGW_KEEP_CATEGORIES="$keep" python3 "${SURGE_CONV}" "$src" 2>/tmp/pgw-surge.err >"${RULES_FILE}.tmp")" || true
+    summary="$(PGW_KEEP_CATEGORIES="$keep" python3 "${RULES_IMPORT}" "$src" 2>/tmp/pgw-import.err >"${RULES_FILE}.tmp")" || true
     if [[ ! -s "${RULES_FILE}.tmp" ]]; then
-        err "Conversion produced no rules:"; sed 's/^/    /' /tmp/pgw-surge.err >&2; rm -f "${RULES_FILE}.tmp"; exit 1
+        err "Conversion produced no rules:"; sed 's/^/    /' /tmp/pgw-import.err >&2; rm -f "${RULES_FILE}.tmp"; exit 1
     fi
     install -m 644 "${RULES_FILE}.tmp" "${RULES_FILE}"; rm -f "${RULES_FILE}.tmp"
-    grep -E '^(converted|CATEGORIES)' /tmp/pgw-surge.err | sed 's/^/[INFO] /'
+    grep -E '^(converted|CATEGORIES)' /tmp/pgw-import.err | sed 's/^/[INFO] /'
 
     init_policy_map
     info "Categories were seeded in ${POLICY_MAP} (edit on the bot or with --set-policy)."
@@ -1831,7 +1831,7 @@ show_policy() {
     if [[ -s "${POLICY_MAP}" ]]; then
         sort "${POLICY_MAP}"
     else
-        info "No policy map yet. Import rules first: $0 --import-surge <file>"
+        info "No policy map yet. Import rules first: $0 --import-rules <file>"
     fi
 }
 
@@ -2247,9 +2247,9 @@ case "${1:-}" in
         check_root
         set_rules "${2:-}"
         ;;
-    --import-surge)
+    --import-rules)
         check_root
-        import_surge "${2:-}"
+        import_rules "${2:-}"
         ;;
     --set-policy)
         check_root

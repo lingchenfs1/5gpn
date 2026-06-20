@@ -2,17 +2,17 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-conv="${root}/surge-to-rules.py"
+conv="${root}/rules-import.py"
 gen="${root}/singbox-router-config.py"
 install_body="$(cat "${root}/install.sh")"
 
 fail() { echo "$1" >&2; exit 1; }
 
-[[ -f "${conv}" ]] || fail "surge-to-rules.py must exist"
-python3 -m py_compile "${conv}" || fail "surge-to-rules.py must compile"
+[[ -f "${conv}" ]] || fail "rules-import.py must exist"
+python3 -m py_compile "${conv}" || fail "rules-import.py must compile"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
-cat > "${tmp}/surge.conf" <<'S'
+cat > "${tmp}/rules.conf" <<'S'
 [Rule]
 DOMAIN-SUFFIX,google.com,AI
 PROCESS-NAME,/Applications/Foo.app,AI
@@ -21,7 +21,7 @@ OR,((DOMAIN,a.com), (SRC-IP,192.168.1.1), (DOMAIN-SUFFIX,b.com)),Proxy
 RULE-SET,https://example.com/x.list,Netflix,"update-interval=86400"
 FINAL,Proxy
 S
-out="$(python3 "${conv}" "${tmp}/surge.conf" 2>"${tmp}/err")"
+out="$(python3 "${conv}" "${tmp}/rules.conf" 2>"${tmp}/err")"
 
 # client-only matchers must be dropped
 grep -q 'PROCESS-NAME' <<<"$out" && fail "PROCESS-NAME must be dropped"
@@ -54,8 +54,8 @@ print("policy resolution OK")
 PY
 
 # install.sh wiring
-for m in 'import_surge()' 'set_policy()' 'regen_smart()' 'init_policy_map()' '--import-surge)' '--set-policy)'; do
+for m in 'import_rules()' 'set_policy()' 'regen_smart()' 'init_policy_map()' '--import-rules)' '--set-policy)'; do
     [[ "${install_body}" == *"${m}"* ]] || fail "install.sh missing: ${m}"
 done
 
-echo "surge import policy OK"
+echo "rules import policy OK"

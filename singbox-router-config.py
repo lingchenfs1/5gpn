@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert a Surge-like rules file into a sing-box "router" exit config.
+Convert a rule-list file into a sing-box "router" exit config.
 
 This powers the `smart` exit: among proxied traffic, route each domain to a
 different egress (another configured exit), DIRECT, or REJECT — driven by rules
@@ -118,7 +118,7 @@ def build_exit_outbound(name):
 # Rule sets
 # --------------------------------------------------------------------------- #
 def parse_rule_list(text):
-    """Parse a plain / Surge / Clash list into a sing-box source rule dict
+    """Parse a plain / domain/IP list into a sing-box source rule dict
     (domain / domain_suffix / domain_keyword / ip_cidr)."""
     dom, suf, kw, ip = set(), set(), set(), set()
     for raw in text.splitlines():
