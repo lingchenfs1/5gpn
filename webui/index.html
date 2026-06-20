@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5gpn 控制面板</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
+          --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:16px; }
+  h1 { font-size:18px; margin:8px 0 16px; }
+  h2 { font-size:14px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .row + .row { margin-top:8px; }
+  input, textarea, select, button { font:inherit; color:var(--fg); background:#11141a;
+    border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  input, select { min-width:0; }
+  input[type=text], input[type=password] { flex:1; }
+  textarea { width:100%; min-height:120px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  button { cursor:pointer; background:#222836; border-color:#2f3645; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.danger { border-color:#5a2a2a; color:#ff9b9b; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--mut); }
+  .pill.on { color:var(--ok); border-color:#1f6b3a; }
+  .pill.off { color:var(--bad); border-color:#5a2a2a; }
+  .exit { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .exit:first-child { border-top:none; }
+  .exit .name { font-weight:600; }
+  .exit .meta { color:var(--mut); font-size:12px; }
+  .grow { flex:1; }
+  .muted { color:var(--mut); }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  .bar { height:8px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
+  .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
+  #out { max-height:220px; overflow:auto; }
+  .small { font-size:12px; }
+  .hide { display:none; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛰️ 5gpn 控制面板</h1>
+
+  <div class="card">
+    <h2>连接</h2>
+    <div class="row">
+      <input id="url" type="text" placeholder="https://你的域名:8443" autocomplete="off">
+    </div>
+    <div class="row">
+      <input id="token" type="password" placeholder="API 令牌 (API_TOKEN)" autocomplete="off">
+      <button class="primary" onclick="connect()">连接</button>
+      <button onclick="clearCreds()">清除</button>
+    </div>
+    <div class="row small muted" id="conn">未连接</div>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="card">
+      <div class="row"><h2 class="grow">状态</h2>
+        <button onclick="loadStatus()">🔄 刷新</button></div>
+      <div id="status" class="mono muted">…</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 class="grow">出口</h2>
+        <button onclick="checkExits()">🩺 检查连通性</button></div>
+      <div id="exits"></div>
+    </div>
+
+    <div class="card">
+      <h2>添加出口</h2>
+      <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
+      <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
+或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]
+密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea></div>
+      <div class="row"><button class="primary" onclick="addExit()">➕ 添加</button></div>
+    </div>
+
+    <div class="card">
+      <h2>分类 → 出口映射</h2>
+      <div id="policy"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 class="grow">分流规则</h2>
+        <button onclick="loadRules()">读取</button>
+        <button onclick="updateRules()">⟳ 更新规则集</button></div>
+      <div class="row small muted" id="rules_meta"></div>
+      <div class="row"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
+      <div class="row"><button class="primary" onclick="saveRules()">💾 保存并应用</button></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2 class="grow">输出</h2><button onclick="document.getElementById('out').textContent=''">清空</button></div>
+      <div id="out" class="mono"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let BASE = "", TOKEN = "";
+
+function log(msg, cls) {
+  const o = $("out");
+  const t = new Date().toLocaleTimeString();
+  o.textContent = "[" + t + "] " + msg + "\n" + o.textContent;
+}
+function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
+  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("conn").textContent="已清除"; }
+
+async function api(path, method, body) {
+  const opt = { method: method||"GET", headers: { "Authorization": "Bearer "+TOKEN } };
+  if (body !== undefined) { opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  const r = await fetch(BASE+path, opt);
+  let j; try { j = await r.json(); } catch(e) { throw new Error("HTTP "+r.status); }
+  if (!r.ok && j && j.error) throw new Error(j.error);
+  return j;
+}
+
+async function connect() {
+  BASE = $("url").value.trim().replace(/\/+$/,"");
+  TOKEN = $("token").value.trim();
+  if (!BASE || !TOKEN) { $("conn").textContent="请填写地址和令牌"; return; }
+  $("conn").textContent = "连接中…";
+  try {
+    await fetch(BASE+"/api/health").then(r=>r.json());
+    await api("/api/status");                      // verifies token
+    localStorage.setItem("pgw_url", BASE);
+    localStorage.setItem("pgw_token", TOKEN);
+    $("app").classList.remove("hide");
+    $("conn").textContent = "已连接 ✅ " + BASE;
+    loadStatus(); loadRules();
+  } catch(e) {
+    $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
+  }
+}
+
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    const m = s.memory||{};
+    const pct = m.total_mb ? Math.round(m.used_mb/m.total_mb*100) : 0;
+    const sv = Object.entries(s.services||{}).map(([k,v])=>
+      `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join(" ");
+    $("status").innerHTML =
+      `<div class="row"><b style="color:var(--fg)">当前出口：${s.current}</b></div>`+
+      `<div class="row" style="margin-top:8px"><div class="grow">内存 ${m.used_mb||0}/${m.total_mb||0} MB（swap ${m.swap_used_mb||0}/${m.swap_total_mb||0} MB）`+
+      `<div class="bar"><i style="width:${pct}%"></i></div></div></div>`+
+      `<div class="row" style="margin-top:10px">${sv}</div>`;
+    renderExits(s.exits, s.current);
+    renderPolicy(s.policy, s.exits);
+  } catch(e){ log("状态获取失败："+e.message); }
+}
+
+function renderExits(exits, cur) {
+  const box = $("exits");
+  const rows = [`<div class="exit"><span class="name">local</span><span class="meta grow">本机直出</span>`+
+    (cur==="local"?`<span class="pill on">使用中</span>`:`<button onclick="setExit('local')">切换</button>`)+`</div>`,
+    `<div class="exit"><span class="name">smart</span><span class="meta grow">智能分流（按规则）</span>`+
+    (cur==="smart"?`<span class="pill on">使用中</span>`:`<button onclick="setExit('smart')">切换</button>`)+`</div>`];
+  (exits||[]).forEach(e=>{
+    rows.push(`<div class="exit"><span class="name">${e.name}</span>`+
+      `<span class="meta grow">${e.type} ${e.server||""}</span>`+
+      (e.active?`<span class="pill on">使用中</span>`:`<button onclick="setExit('${e.name}')">切换</button>`)+
+      `<button class="danger" onclick="delExit('${e.name}')">删</button></div>`);
+  });
+  box.innerHTML = rows.join("");
+}
+
+function renderPolicy(policy, exits) {
+  const box = $("policy");
+  const targets = ["direct","block","local","smart"].concat((exits||[]).map(e=>e.name));
+  const ents = Object.entries(policy||{});
+  if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无分类，先导入/设置分流规则）</div>`; return; }
+  box.innerHTML = ents.map(([cat,tgt])=>{
+    const opts = targets.map(t=>`<option ${t===tgt?'selected':''}>${t}</option>`).join("");
+    return `<div class="exit"><span class="name grow">${cat}</span>`+
+      `<select id="pol_${cat}">${opts}</select>`+
+      `<button onclick="setPolicy('${cat}')">设置</button></div>`;
+  }).join("");
+}
+
+async function setExit(name){ try{ const r=await api("/api/exits/set","POST",{name}); log((r.ok?"✅ ":"❌ ")+"切换 "+name+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+async function delExit(name){ if(!confirm("删除出口 "+name+" ?"))return; try{ const r=await api("/api/exits/del","POST",{name}); log((r.ok?"✅ ":"❌ ")+"删除 "+name+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+async function addExit(){
+  const name=$("ex_name").value.trim(), config=$("ex_cfg").value;
+  if(!name||!config.trim()){ log("请填写名字和配置"); return; }
+  log("⏳ 添加出口 "+name+" …");
+  try{ const r=await api("/api/exits/add","POST",{name,config});
+    log((r.ok?"✅ ":"❌ ")+"添加 "+name+"\n"+(r.output||""));
+    if(r.ok){ $("ex_name").value=""; $("ex_cfg").value=""; } loadStatus();
+  }catch(e){ log("❌ "+e.message);} }
+async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await api("/api/exits/check","POST",{});
+  log("🩺 出口连通性：\n"+(r.exits||[]).map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n")); }catch(e){ log("❌ "+e.message);} }
+async function setPolicy(cat){ const tgt=$("pol_"+cat).value; log("⏳ "+cat+" → "+tgt+" …");
+  try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
+
+async function loadRules(){ try{ const r=await api("/api/rules"); $("rules").value=r.rules||"";
+  $("rules_meta").textContent="共 "+(r.count||0)+" 条规则"; }catch(e){ log("❌ "+e.message);} }
+async function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
+  if(!confirm("保存并应用这份分流规则？"))return; log("⏳ 保存规则（可能需要拉取规则集）…");
+  try{ const r=await api("/api/rules","POST",{rules}); log((r.ok?"✅ ":"❌ ")+"保存规则\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+async function updateRules(){ log("⏳ 更新 GFWList/ChinaList…"); try{ const r=await api("/api/update-rules","POST",{}); log((r.ok?"✅ ":"❌ ")+"更新规则\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
+
+// restore saved creds
+(function(){ const u=localStorage.getItem("pgw_url"), t=localStorage.getItem("pgw_token");
+  if(u) $("url").value=u; if(t) $("token").value=t; if(u&&t) connect(); })();
+</script>
+</body>
+</html>

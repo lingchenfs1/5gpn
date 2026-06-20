@@ -18,6 +18,7 @@ LOG_DIR="${BASE_DIR}/log"
 SRC_DIR="${BASE_DIR}/src"
 WWW_DIR="${BASE_DIR}/www"
 IOS_PROFILE_PORT=8111
+API_PORT_DEFAULT=8443
 # Switchable egress ("exit") routing. Proxy outbound traffic runs as EXIT_USER
 # and is marked, then policy-routed into the selected WireGuard tunnel.
 EXIT_USER="pxout"
@@ -182,6 +183,8 @@ Options:
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
+  --setup-api    Install/enable the HTTP control API (web panel). Token auto-
+                 generated (or API_TOKEN env); port API_PORT (default 8443).
   --uninstall    Remove all installed components
   -ios          Regenerate iOS DoT profile and QR code
   -h, --help     Show this help
@@ -1148,6 +1151,13 @@ setup_firewall() {
     # ruleset fails to load. (No-op if already created.)
     ensure_proxy_user
 
+    # Allowed inbound TCP ports; add the control-API port if it has been set up.
+    local api_port="" tcp_ports="22, 53, 853, 8111" tcp_ports_ipt="22,53,853,8111"
+    [[ -f "${CONF_DIR}/.api_port" ]] && api_port="$(tr -dc '0-9' < "${CONF_DIR}/.api_port" 2>/dev/null)"
+    if [[ -n "$api_port" ]]; then
+        tcp_ports="${tcp_ports}, ${api_port}"; tcp_ports_ipt="${tcp_ports_ipt},${api_port}"
+    fi
+
     if command -v nft >/dev/null 2>&1; then
         # nftables
         cat > /etc/nftables.conf <<'EOF'
@@ -1159,7 +1169,7 @@ table inet filter {
         type filter hook input priority 0; policy drop;
         iif "lo" accept
         ct state established,related accept
-        tcp dport { 22, 53, 853, 8111 } accept
+        tcp dport { __TCP_PORTS__ } accept
         udp dport 53 accept
         ip saddr 172.22.0.0/16 tcp dport { 80, 443 } accept
         ip saddr 172.22.0.0/16 udp dport 443 accept
@@ -1193,6 +1203,7 @@ table inet pgw_exit {
     }
 }
 EOF
+        sed -i "s/__TCP_PORTS__/${tcp_ports}/" /etc/nftables.conf
         chmod +x /etc/nftables.conf
         nft -f /etc/nftables.conf 2>/dev/null || true
         systemctl enable nftables 2>/dev/null || true
@@ -1202,7 +1213,7 @@ EOF
         iptables -P INPUT DROP
         iptables -A INPUT -i lo -j ACCEPT
         iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        iptables -A INPUT -p tcp -m multiport --dports 22,53,853,8111 -j ACCEPT
+        iptables -A INPUT -p tcp -m multiport --dports ${tcp_ports_ipt} -j ACCEPT
         iptables -A INPUT -p udp --dport 53 -j ACCEPT
         iptables -A INPUT -s 172.22.0.0/16 -p tcp -m multiport --dports 80,443 -j ACCEPT
         iptables -A INPUT -s 172.22.0.0/16 -p udp --dport 443 -j ACCEPT
@@ -1956,6 +1967,86 @@ EOF
     ok "Telegram bot 已安装。在 Telegram 给你的 Bot 发送 /start 开始操作。"
 }
 
+# Install/enable the HTTP control API (same backend as the bot -> always in sync).
+setup_api() {
+    local token="${API_TOKEN:-}"
+    local port="${API_PORT:-${API_PORT_DEFAULT}}"
+    port="$(printf '%s' "$port" | tr -dc '0-9')"; [[ -n "$port" ]] || port="${API_PORT_DEFAULT}"
+
+    if [[ -z "$token" ]]; then
+        token="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    if [[ -z "$token" || ${#token} -lt 16 ]]; then
+        err "Could not generate an API token. Set API_TOKEN and retry."; return 1
+    fi
+
+    local py; py="$(command -v python3 || echo /usr/bin/python3)"
+    if [[ ! -f "${SCRIPT_DIR}/api-server.py" ]]; then
+        err "api-server.py not found in ${SCRIPT_DIR}"; return 1
+    fi
+
+    info "Installing HTTP control API..."
+    mkdir -p "${BASE_DIR}/bin" "${CONF_DIR}"
+    install -m 0755 "${SCRIPT_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
+    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/proxy-gateway-ctl"
+    # Bundle the web panel so it can be served/copied from the box if wanted.
+    if [[ -f "${SCRIPT_DIR}/webui/index.html" ]]; then
+        mkdir -p "${BASE_DIR}/webui"
+        install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"
+    fi
+
+    local domain; domain="$(cat /etc/dnsdist/.domain 2>/dev/null || echo "")"
+    local cert_base="${domain}"
+    [[ -f "${CONF_DIR}/.cert_basename" ]] && cert_base="$(cat "${CONF_DIR}/.cert_basename")"
+    local cert="/etc/dnsdist/certs/fullchain.pem" key="/etc/dnsdist/certs/privkey.pem"
+    [[ -f "$cert" && -f "$key" ]] || warn "TLS certs not found at ${cert} — run --renew-cert or full install first; the API needs them to start."
+
+    cat > "${CONF_DIR}/api.env" <<EOF
+API_TOKEN=${token}
+API_PORT=${port}
+API_BIND=0.0.0.0
+API_TLS_CERT=${cert}
+API_TLS_KEY=${key}
+API_ALLOW_ORIGIN=*
+MGMT=${BASE_DIR}/bin/proxy-gateway-ctl
+CONF_DIR=${CONF_DIR}
+EOF
+    chmod 600 "${CONF_DIR}/api.env"
+    printf '%s' "$port" > "${CONF_DIR}/.api_port"
+
+    cat > /etc/systemd/system/proxy-gateway-api.service <<EOF
+[Unit]
+Description=Proxy Gateway HTTP control API
+After=network-online.target dnsdist.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=${CONF_DIR}/api.env
+ExecStart=${py} ${BASE_DIR}/bin/api-server.py
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Open the API port in the firewall (persisted via .api_port) and start.
+    setup_firewall >/dev/null 2>&1 || true
+    systemctl daemon-reload
+    systemctl enable --now proxy-gateway-api.service 2>/dev/null || systemctl restart proxy-gateway-api.service
+
+    echo ""
+    ok "HTTP 控制 API 已启用。"
+    echo "  地址 (API Base URL): https://${domain:-<你的域名>}:${port}"
+    echo "  令牌 (API_TOKEN):    ${token}"
+    echo "  健康检查:            curl -k https://${domain:-<域名>}:${port}/api/health"
+    echo "  网页面板:            打开仓库里的 webui/index.html，填入上面的地址和令牌即可。"
+    echo "  令牌存放:            ${CONF_DIR}/api.env (chmod 600)"
+    warn "API 可控制出口/分流，务必保管好令牌；只用 HTTPS 访问。"
+}
+
 # =============================================================================
 # Low-memory Go runtime caps (drop-ins for the two Go proxies)
 # =============================================================================
@@ -2087,9 +2178,9 @@ do_uninstall() {
     done
     shopt -u nullglob
 
-    systemctl stop dnsdist sniproxy quic-proxy china-dns-race-proxy proxy-gateway-ios-profile.socket proxy-gateway-ios-profile proxy-gateway-exit proxy-gateway-tgbot 2>/dev/null || true
-    systemctl disable dnsdist sniproxy quic-proxy china-dns-race-proxy proxy-gateway-ios-profile.socket proxy-gateway-ios-profile proxy-gateway-exit proxy-gateway-tgbot 2>/dev/null || true
-    rm -f /etc/systemd/system/{sniproxy,quic-proxy,china-dns-race-proxy,proxy-gateway-ios-profile,update-dnsdist-rules,proxy-gateway-exit,proxy-gateway-tgbot}.*
+    systemctl stop dnsdist sniproxy quic-proxy china-dns-race-proxy proxy-gateway-ios-profile.socket proxy-gateway-ios-profile proxy-gateway-exit proxy-gateway-tgbot proxy-gateway-api 2>/dev/null || true
+    systemctl disable dnsdist sniproxy quic-proxy china-dns-race-proxy proxy-gateway-ios-profile.socket proxy-gateway-ios-profile proxy-gateway-exit proxy-gateway-tgbot proxy-gateway-api 2>/dev/null || true
+    rm -f /etc/systemd/system/{sniproxy,quic-proxy,china-dns-race-proxy,proxy-gateway-ios-profile,update-dnsdist-rules,proxy-gateway-exit,proxy-gateway-tgbot,proxy-gateway-api}.*
     rm -f /etc/systemd/system/proxy-gateway-ios-profile@.service /etc/systemd/system/proxy-gateway-singbox@.service
     rm -rf /etc/systemd/system/quic-proxy.service.d /etc/systemd/system/china-dns-race-proxy.service.d
     systemctl daemon-reload
@@ -2310,6 +2401,10 @@ case "${1:-}" in
     --setup-tgbot)
         check_root
         setup_tgbot
+        ;;
+    --setup-api)
+        check_root
+        setup_api
         ;;
     --uninstall)
         do_uninstall

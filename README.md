@@ -215,6 +215,24 @@ export TG_ADMIN_IDS="11111111,22222222"   # 你的 Telegram 数字 ID
 
 添加出口流程:点 🌐 出口 → ➕ 添加出口 → 发一个名字(如 `us`)→ 把 `exit-server-setup.sh` 生成的 WireGuard 配置整段粘贴发给 Bot → 完成后在出口列表里点它即可切换。中途随时 `/cancel` 取消。
 
+## HTTP 控制 API + 网页面板（可选）
+
+除了 Telegram Bot，还可以用一个 **HTTP API** 从网页控制网关。API 和 Bot 走**同一套后端**(`proxy-gateway-ctl` + `/etc/proxy-gateway` 配置)，所以两边**天然同步**——一个改了，另一个立刻看到。
+
+```bash
+./install.sh --setup-api      # 自动生成令牌；端口 API_PORT(默认 8443)，复用 Let's Encrypt 证书
+```
+
+启用后会打印 **API 地址**(`https://你的域名:8443`)和**令牌**。打开仓库里的 [`webui/index.html`](webui/index.html)(可托管在任意地方，或本地双击打开)，填入地址和令牌即可在网页上查看状态、切换/增删出口、检查连通性、编辑分流规则、设置分类→出口映射。
+
+**安全模型**:
+
+- 仅 **HTTPS**(用网关已有的证书),所有 `/api/*` 需 `Authorization: Bearer <令牌>`(常数时间比较);令牌存于 root-only 的 `/opt/proxy-gateway/etc/api.env`。
+- 输入严格校验、固定 argv、绝不拼 shell;**不暴露** `--uninstall`。
+- 跨域(CORS)放开,令牌即凭证——务必保管好令牌,只走 HTTPS。
+
+接口一览(均返回 JSON):`GET /api/health`(免鉴权)·`GET /api/status`·`GET /api/exits`·`POST /api/exits/{set,add,del,check}`·`GET|POST /api/rules`·`GET|POST /api/policy`·`POST /api/update-rules`。
+
 ## 切换出口（多出口中转）
 
 默认出口是 `local`——被代理的流量从**本机公网 IP**直接出网（目标网站看到的是这台服务器的 IP）。你可以把出口切换到其他服务器，让目标网站看到**远端服务器的 IP**。
