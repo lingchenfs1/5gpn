@@ -103,6 +103,62 @@ def _chunks(text, size):
         yield text[i : i + size]
 
 
+def edit(cb, text, keyboard=None, mono=False):
+    """Edit the message the button belongs to (keeps everything in one bubble).
+    Falls back to a new message if the edit can't be applied."""
+    msg = cb.get("message", {})
+    chat_id = msg.get("chat", {}).get("id")
+    mid = msg.get("message_id")
+    if mono:
+        text = "<pre>" + html.escape(((text or "").strip() or "(no output)")[:3800]) + "</pre>"
+    params = {
+        "chat_id": chat_id, "message_id": mid, "text": (text or "")[:4096],
+        "parse_mode": "HTML", "disable_web_page_preview": True,
+    }
+    if keyboard is not None:
+        params["reply_markup"] = {"inline_keyboard": keyboard}
+    r = tg("editMessageText", **params)
+    if not r.get("ok"):
+        desc = str(r)
+        if "not modified" in desc:
+            return  # nothing to do
+        # original may be a photo / too old / gone -> post a fresh message
+        send(chat_id, text if not mono else text, keyboard if keyboard else None)
+
+
+def back_kb(target="menu:main", label="« 返回"):
+    return [[{"text": label, "callback_data": target}]]
+
+
+def send_photo(chat_id, path, caption=""):
+    """Upload a local image via multipart/form-data (sendPhoto)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    boundary = "----pgwQRboundary8f3a2b"
+
+    def _field(name, val):
+        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                % (boundary, name, val)).encode("utf-8")
+
+    body = _field("chat_id", str(chat_id))
+    if caption:
+        body += _field("caption", caption) + _field("parse_mode", "HTML")
+    body += ("--%s\r\nContent-Disposition: form-data; name=\"photo\"; "
+             "filename=\"qr.png\"\r\nContent-Type: image/png\r\n\r\n" % boundary).encode("utf-8")
+    body += data + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    req = urllib.request.Request(
+        API + "sendPhoto", data=body,
+        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("ok", False)
+    except Exception:
+        return False
+
+
 def pre(text):
     """Wrap command output in a monospace HTML block, safely escaped."""
     text = text.strip() or "(no output)"
@@ -565,24 +621,22 @@ def parse_exit_names():
     return names
 
 
-def op_ios():
-    parts = []
-    try:
-        with open(os.path.join(WWW_DIR, "ios-profile-url.txt")) as f:
-            parts.append("URL: " + f.read().strip())
-    except OSError:
-        parts.append("iOS profile URL not found.")
-    qr = ""
-    try:
-        with open(os.path.join(WWW_DIR, "ios-dot.qr.txt")) as f:
-            qr = f.read()
-    except OSError:
-        pass
-    msg = "\n".join(parts)
-    if qr:
-        msg += "\n" + pre(qr)
-        return msg, True
-    return html.escape(msg), False
+def op_ios_send(chat_id):
+    """Send the iOS profile QR as an image (with the URL as caption)."""
+    url = _read_file(os.path.join(WWW_DIR, "ios-profile-url.txt"))
+    if not url:
+        domain = _read_file("/etc/dnsdist/.domain") or _read_file("/opt/proxy-gateway/etc/.domain")
+        if domain:
+            url = "http://%s:8111/ios-dot.mobileconfig" % domain
+    if not url:
+        return "未找到 iOS 描述文件地址,先在服务器上 `--ios` 生成。"
+    cap = ("📱 <b>iOS DoT 描述文件</b>\n扫码安装(仅蜂窝网启用):\n<code>%s</code>" % html.escape(url))
+    png = "/tmp/pgw-ios-qr.png"
+    ok, _ = run2(["qrencode", "-o", png, "-s", "8", "-m", "2", url], timeout=15)
+    if ok and send_photo(chat_id, png, cap):
+        return None  # delivered as a photo
+    # fallback: just the URL (text)
+    return cap
 
 
 # --------------------------------------------------------------------------- #
@@ -765,32 +819,83 @@ def handle_callback(cb):
     # Stop the button spinner immediately; long ops still run synchronously.
     tg("answerCallbackQuery", callback_query_id=cb_id)
 
+    # ---- navigation (edit the same bubble) ----
     if data == "menu:main":
         PENDING.pop(chat_id, None)
-        send(chat_id, "选择一个操作：", main_menu())
+        edit(cb, "选择一个操作：", main_menu())
     elif data == "menu:rules":
-        send(chat_id, "🧭 <b>智能分流</b>：按域名把代理流量分到不同出口 / 直连 / 拒绝。", rules_menu())
-    elif data == "rules:show":
-        send(chat_id, op_show_rules(), rules_menu())
+        edit(cb, "🧭 <b>智能分流</b>：按域名把代理流量分到不同出口 / 直连 / 拒绝。", rules_menu())
+    elif data == "menu:policy":
+        edit(cb, "🎯 <b>分类 → 出口</b> 映射（点一个分类来修改目标）：", policy_menu())
+    elif data == "menu:exits":
+        edit(cb, "选择要切换到的出口，或添加/删除：", exits_menu())
+    elif data == "menu:exits_del":
+        edit(cb, "选择要删除的出口：", exits_del_menu())
+    elif data == "menu:restart":
+        edit(cb, "选择要重启的服务：", services_menu("restart"))
+    elif data == "menu:logs":
+        edit(cb, "选择要查看日志的服务：", services_menu("logs"))
+
+    # ---- conversational starts (edit prompt into the same bubble) ----
     elif data == "rules:set":
         PENDING[chat_id] = {"action": "rules_set"}
-        send(chat_id,
+        edit(cb,
              "粘贴<b>整份</b>分流规则（首行优先）。示例：\n"
-             "<pre>DOMAIN-SUFFIX,google.com,att\nDOMAIN-KEYWORD,telegram,att\n"
-             "GEOSITE,netflix,att\nGEOIP,cn,direct\n"
-             "RULE-SET,https://example.com/list.txt,att\nFINAL,att</pre>\n"
-             "策略可用：出口名 / <code>direct</code> / <code>block</code>。\n发送 /cancel 取消。")
+             "<pre>DOMAIN-SUFFIX,google.com,att\nGEOSITE,netflix,att\n"
+             "GEOIP,cn,direct\nFINAL,att</pre>\n"
+             "策略：出口名 / <code>direct</code> / <code>block</code>。\n发送 /cancel 取消。")
     elif data == "rules:add":
         PENDING[chat_id] = {"action": "rules_add"}
-        send(chat_id, "发送要追加的<b>一条</b>规则，例如：\n<code>DOMAIN-SUFFIX,youtube.com,att</code>\n发送 /cancel 取消。")
+        edit(cb, "发送要追加的<b>一条</b>规则，例如：\n<code>DOMAIN-SUFFIX,youtube.com,att</code>\n发送 /cancel 取消。")
     elif data == "rules:del":
         PENDING[chat_id] = {"action": "rules_del"}
-        send(chat_id, op_show_rules() + "\n\n发送要删除的<b>序号</b>，或 /cancel 取消。")
+        edit(cb, op_show_rules() + "\n\n发送要删除的<b>序号</b>，或 /cancel 取消。")
+    elif data == "exit_add":
+        PENDING[chat_id] = {"action": "add_exit_name"}
+        edit(cb, "添加出口：先发一个名字（1-11 位小写字母/数字，如 us / jp / hk）。\n发送 /cancel 取消。")
+
+    # ---- views ----
+    elif data == "rules:show":
+        edit(cb, op_show_rules(), back_kb("menu:rules"))
+    elif data == "act:status":
+        edit(cb, op_status(), back_kb("menu:main"))
+    elif data.startswith("logs:"):
+        svc = data[len("logs:"):]
+        edit(cb, "📜 正在取 <b>%s</b> 日志…" % html.escape(svc))
+        edit(cb, op_logs(svc), back_kb("menu:logs"), mono=True)
+    elif data == "exits:check":
+        edit(cb, "⏳ 正在检查出口连通性…")
+        edit(cb, op_check_exits(), back_kb("menu:exits"))
+
+    # ---- actions (⏳ then result, all in one bubble) ----
+    elif data == "act:update_rules":
+        edit(cb, "⏳ 正在更新规则，请稍候…")
+        edit(cb, op_update_rules(), back_kb("menu:main"))
+    elif data == "act:renew":
+        edit(cb, "⏳ 正在续期证书，请稍候…")
+        edit(cb, op_renew_cert(), back_kb("menu:main"))
     elif data == "rules:enable":
-        send(chat_id, "⏳ 正在启用智能分流…")
-        send(chat_id, op_set_exit("smart"))
-    elif data == "menu:policy":
-        send(chat_id, "🎯 <b>分类 → 出口</b> 映射（点一个分类来修改目标）：", policy_menu())
+        edit(cb, "⏳ 正在启用智能分流…")
+        edit(cb, op_set_exit("smart"), back_kb("menu:rules"))
+    elif data.startswith("exit:"):
+        name = data[len("exit:"):]
+        edit(cb, "⏳ 正在切换出口到 <b>%s</b>…" % html.escape(name))
+        edit(cb, op_set_exit(name), back_kb("menu:exits"))
+    elif data.startswith("exitdel:"):
+        name = data[len("exitdel:"):]
+        edit(cb, "⏳ 正在删除出口 <b>%s</b>…" % html.escape(name))
+        edit(cb, op_del_exit(name), back_kb("menu:exits"))
+    elif data.startswith("restart:"):
+        svc = data[len("restart:"):]
+        edit(cb, "⏳ 正在重启 <b>%s</b>…" % html.escape(svc))
+        edit(cb, op_restart(svc), back_kb("menu:restart"))
+    elif data == "act:ios":
+        edit(cb, "⏳ 正在生成 iOS 二维码…")
+        res = op_ios_send(chat_id)
+        if res:                       # photo failed -> show URL text
+            edit(cb, res, back_kb("menu:main"))
+        else:
+            edit(cb, "📱 iOS 描述文件二维码已发送 ↓\n\n选择一个操作：", main_menu())
     elif data.startswith("pol:"):
         try:
             idx = int(data.split(":")[1])
@@ -798,10 +903,10 @@ def handle_callback(cb):
             idx = -1
         pm = _policy_map()
         if 0 <= idx < len(pm):
-            send(chat_id, "把分类 <b>%s</b>（现为 %s）路由到哪里？"
+            edit(cb, "把分类 <b>%s</b>（现为 %s）路由到哪里？"
                  % (html.escape(pm[idx][0]), html.escape(pm[idx][1])), policy_targets_menu(idx))
         else:
-            send(chat_id, "分类已变化，请重新打开。", policy_menu())
+            edit(cb, "分类已变化，请重新打开。", policy_menu())
     elif data.startswith("ps:"):
         parts = data.split(":", 2)
         pm = _policy_map()
@@ -811,54 +916,13 @@ def handle_callback(cb):
             idx, target = -1, ""
         if 0 <= idx < len(pm):
             cat = pm[idx][0]
-            send(chat_id, "⏳ 正在设置 <b>%s</b> → <b>%s</b> 并重建分流（拉取/编译规则集，可能较久）…"
+            edit(cb, "⏳ 正在设置 <b>%s</b> → <b>%s</b> 并重建分流（可能较久）…"
                  % (html.escape(cat), html.escape(target)))
-            send(chat_id, op_set_policy(cat, target), policy_menu())
+            edit(cb, op_set_policy(cat, target), back_kb("menu:policy"))
         else:
-            send(chat_id, "分类已变化，请重新打开。", policy_menu())
-    elif data == "menu:exits":
-        send(chat_id, "选择要切换到的出口，或添加/删除：", exits_menu())
-    elif data == "menu:exits_del":
-        send(chat_id, "选择要删除的出口：", exits_del_menu())
-    elif data == "exits:check":
-        send(chat_id, "⏳ 正在检查出口连通性…")
-        send(chat_id, op_check_exits(), exits_menu())
-    elif data == "exit_add":
-        PENDING[chat_id] = {"action": "add_exit_name"}
-        send(chat_id, "添加出口：先发一个名字（1-11 位小写字母/数字，如 us / jp / hk）。\n发送 /cancel 取消。")
-    elif data.startswith("exitdel:"):
-        name = data[len("exitdel:"):]
-        send(chat_id, "⏳ 正在删除出口 <b>%s</b>…" % html.escape(name))
-        send(chat_id, op_del_exit(name), exits_menu())
-    elif data == "menu:restart":
-        send(chat_id, "选择要重启的服务：", services_menu("restart"))
-    elif data == "menu:logs":
-        send(chat_id, "选择要查看日志的服务：", services_menu("logs"))
-    elif data == "act:status":
-        send(chat_id, op_status())
-    elif data == "act:update_rules":
-        send(chat_id, "⏳ 正在更新规则，请稍候…")
-        send(chat_id, op_update_rules())
-    elif data == "act:renew":
-        send(chat_id, "⏳ 正在续期证书，请稍候…")
-        send(chat_id, op_renew_cert())
-    elif data == "act:ios":
-        msg, is_html = op_ios()
-        send(chat_id, msg)
-    elif data.startswith("exit:"):
-        name = data[len("exit:"):]
-        send(chat_id, "⏳ 正在切换出口到 <b>%s</b>…" % html.escape(name))
-        send(chat_id, op_set_exit(name))
-    elif data.startswith("restart:"):
-        svc = data[len("restart:"):]
-        send(chat_id, "⏳ 正在重启 <b>%s</b>…" % html.escape(svc))
-        send(chat_id, op_restart(svc))
-    elif data.startswith("logs:"):
-        svc = data[len("logs:"):]
-        send(chat_id, "📜 <b>%s</b> 最近日志：" % html.escape(svc))
-        send(chat_id, op_logs(svc), mono=True)
+            edit(cb, "分类已变化，请重新打开。", policy_menu())
     else:
-        send(chat_id, "未知操作。")
+        edit(cb, "未知操作。", back_kb("menu:main"))
 
 
 # Quick command menu (the Telegram "Menu" button / typing "/"), Chinese labels.
