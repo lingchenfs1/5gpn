@@ -107,8 +107,8 @@ FINAL,Proxy
 ## 五、快速开始
 
 ```bash
-# 1. 上传文件到服务器,运行安装脚本(交互输入你自己的域名)
-chmod +x install.sh && sudo ./install.sh
+# 1. 一键安装(交互输入你自己的域名)
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/lingchenfs1/5gpn/main/quick-install.sh)
 
 # 2. 客户端配置 DoT:
 #    Android → 私人 DNS 填 your-domain.com
