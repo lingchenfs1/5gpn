@@ -11,6 +11,7 @@ CHINALIST_LUA="${BASE_DIR}/chinalist.lua"
 CHINALIST_CHUNK_DIR="${BASE_DIR}/chinalist.d"
 CHINALIST_CHUNK_SIZE=20000
 GFWLIST_EXTRA_FILE="${BASE_DIR}/gfwlist-extra-local.txt"
+DEFAULT_RULES_FILE="/etc/proxy-gateway/rules-default.conf"
 DNSDIST_TEMPLATE="${BASE_DIR}/dnsdist.conf.template"
 DNSDIST_CONF="/etc/dnsdist/dnsdist.conf"
 DEFAULT_OVERSEAS_DNS=("1.1.1.1" "8.8.8.8" "9.9.9.9")
@@ -73,6 +74,90 @@ append_local_gfwlist_extras() {
 
     rm -f "${gfw_domain_index}"
     echo "[+] Local GFWList extras: ${extra_count} domains"
+}
+
+# Domains targeted by the bundled default smart rules (e.g. speedtest) must also
+# be hijacked into the proxy, otherwise the "which exit" rule never sees them.
+# Derives domains from rules-default.conf (plain DOMAIN* lines + RULE-SET URLs),
+# skipping direct/block categories, and adds them to the GFWList.
+append_default_rule_domains() {
+    [[ -f "${DEFAULT_RULES_FILE}" ]] || return 0
+
+    echo "[*] Hijacking domains from default smart rules (so they enter the proxy)..."
+    touch "${GFWLIST_LUA}"
+    local gfw_domain_index="${BASE_DIR}/gfwlist.domains"
+    sed -n 's/^gfwList:add(newDNSName("\(.*\)"))$/\1/p' "${GFWLIST_LUA}" | sort -u > "${gfw_domain_index}"
+
+    local domains
+    domains="$(python3 - "${DEFAULT_RULES_FILE}" <<'PY'
+import sys, re, urllib.request
+DOM = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)+$')
+def clean(s):
+    s = s.strip().strip("'\"")
+    for p in ("+.", "*."):
+        if s.startswith(p):
+            s = s[2:]
+    s = s.lstrip(".").rstrip(".")
+    if s.startswith("www."):
+        s = s[4:]
+    return s
+def from_list(text):
+    out = []
+    for raw in text.splitlines():
+        l = raw.split("#", 1)[0].strip()
+        if not l or l.lower().startswith("payload") or l[:1] in "!;":
+            continue
+        l = l.lstrip("- ").strip().strip("'\"")
+        if "," in l:
+            parts = [p.strip().strip("'\"") for p in l.split(",")]
+            if parts[0].upper() in ("DOMAIN", "HOST", "DOMAIN-SUFFIX", "HOST-SUFFIX") and len(parts) > 1:
+                d = clean(parts[1])
+                if DOM.match(d):
+                    out.append(d)
+        else:
+            d = clean(l)
+            if DOM.match(d):
+                out.append(d)
+    return out
+res = set()
+for raw in open(sys.argv[1]):
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 2:
+        continue
+    typ, cat = parts[0].upper(), parts[-1].lower()
+    if cat in ("direct", "dir", "block", "reject"):
+        continue
+    if typ in ("DOMAIN", "HOST", "DOMAIN-SUFFIX", "HOST-SUFFIX"):
+        d = clean(parts[1])
+        if DOM.match(d):
+            res.add(d)
+    elif typ == "RULE-SET" and parts[1].startswith("http"):
+        try:
+            with urllib.request.urlopen(parts[1], timeout=15) as r:
+                res.update(from_list(r.read().decode("utf-8", "ignore")))
+        except Exception as e:
+            sys.stderr.write("[!] default rule-set fetch failed (%s): %s\n" % (parts[1], e))
+for d in sorted(res):
+    print(d)
+PY
+)"
+
+    local added=0 domain
+    while IFS= read -r domain; do
+        [[ -z "${domain}" ]] && continue
+        if grep -Fxq "${domain}" "${gfw_domain_index}"; then
+            continue
+        fi
+        echo "gfwList:add(newDNSName(\"${domain}\"))" >> "${GFWLIST_LUA}"
+        echo "${domain}" >> "${gfw_domain_index}"
+        added=$((added + 1))
+    done <<< "${domains}"
+
+    rm -f "${gfw_domain_index}"
+    echo "[+] Default-rule hijack domains: ${added}"
 }
 
 install_chinalist_chunks() {
@@ -184,6 +269,7 @@ else
     echo "[+] GFWList: ${count} domains"
 fi
 append_local_gfwlist_extras
+append_default_rule_domains
 
 echo "[*] Downloading ChinaList..."
 if ! wget -qO "${CHINALIST_FILE}" "${CHINALIST_URL}" 2>/dev/null; then
