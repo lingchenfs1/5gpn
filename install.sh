@@ -30,6 +30,7 @@ RULES_FILE="/etc/proxy-gateway/rules.conf"
 POLICY_MAP="/etc/proxy-gateway/policy-map.conf"
 KEEP_FILE="/etc/proxy-gateway/keep-categories"
 DIRECT_FILE="/etc/proxy-gateway/direct-categories"
+RULES_DEFAULT="/etc/proxy-gateway/rules-default.conf"
 RULESET_CACHE="/etc/proxy-gateway/rulesets"
 SINGBOX_BIN="/opt/proxy-gateway/bin/sing-box"
 SINGBOX_CFG_GEN="/opt/proxy-gateway/bin/singbox-exit-config.py"
@@ -1176,6 +1177,7 @@ table inet pgw_exit {
     chain mark_out {
         type route hook output priority -150; policy accept;
         ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } return
+        meta l4proto { tcp, udp } th dport 53 return
         meta skuid "pxout" meta mark set 0x1
     }
     chain clamp {
@@ -1210,6 +1212,13 @@ EOF
             for pn in 127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10; do
                 while iptables -t mangle -D OUTPUT -m owner --uid-owner "${EXIT_USER}" -d "$pn" -j RETURN 2>/dev/null; do :; done
                 iptables -t mangle -A OUTPUT -m owner --uid-owner "${EXIT_USER}" -d "$pn" -j RETURN 2>/dev/null || true
+            done
+            # DNS (port 53) resolves directly, never through the exit (many SOCKS
+            # exits don't relay UDP, which would otherwise break name resolution).
+            local pp
+            for pp in udp tcp; do
+                while iptables -t mangle -D OUTPUT -m owner --uid-owner "${EXIT_USER}" -p "$pp" --dport 53 -j RETURN 2>/dev/null; do :; done
+                iptables -t mangle -A OUTPUT -m owner --uid-owner "${EXIT_USER}" -p "$pp" --dport 53 -j RETURN 2>/dev/null || true
             done
             iptables -t mangle -A OUTPUT -m owner --uid-owner "${EXIT_USER}" -j MARK --set-mark "${EXIT_MARK}" 2>/dev/null || true
             iptables -t mangle -C POSTROUTING -o "pgw+" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
@@ -1521,6 +1530,11 @@ setup_exit_switching() {
     [[ -f "${SCRIPT_DIR}/rules-import.py" ]] && \
         install -m 0755 "${SCRIPT_DIR}/rules-import.py" "${RULES_IMPORT}"
 
+    # Built-in default smart rules (e.g. speedtest) — merged ahead of user rules.
+    mkdir -p "$(dirname "${RULES_DEFAULT}")"
+    [[ -f "${SCRIPT_DIR}/rules-default.conf" ]] && \
+        install -m 0644 "${SCRIPT_DIR}/rules-default.conf" "${RULES_DEFAULT}"
+
     install_apply_exit_helper
 
     cat > /etc/systemd/system/proxy-gateway-exit.service <<'EOF'
@@ -1707,12 +1721,17 @@ regen_smart() {
     install_singbox_unit
 
     info "Building smart router config (fetching/compiling rule-sets — may take a while)..."
+    # Effective rules = built-in defaults (e.g. speedtest) first, then user rules.
+    local eff; eff="$(mktemp)"
+    [[ -f "${RULES_DEFAULT}" ]] && cat "${RULES_DEFAULT}" >> "$eff"
+    cat "${RULES_FILE}" >> "$eff"
     local json gen_err; json="$(exit_singbox_conf smart)"
     if ! gen_err="$(EXITS_DIR="${EXITS_DIR}" WG_DIR="${WG_DIR}" PGW_RULESET_CACHE="${RULESET_CACHE}" \
                     PGW_POLICY_MAP="${POLICY_MAP}" SINGBOX_BIN="${SINGBOX_BIN}" \
-                    python3 "${SINGBOX_ROUTER_GEN}" "${RULES_FILE}" 2>&1 >"${json}.tmp")"; then
-        err "Rules error: ${gen_err}"; rm -f "${json}.tmp"; exit 1
+                    python3 "${SINGBOX_ROUTER_GEN}" "$eff" 2>&1 >"${json}.tmp")"; then
+        err "Rules error: ${gen_err}"; rm -f "${json}.tmp" "$eff"; exit 1
     fi
+    rm -f "$eff"
     if ! "${SINGBOX_BIN}" check -c "${json}.tmp" >/dev/null 2>&1; then
         err "sing-box rejected the generated router config:"
         "${SINGBOX_BIN}" check -c "${json}.tmp" 2>&1 | sed 's/^/    /' >&2
@@ -1818,7 +1837,7 @@ init_policy_map() {
             esac
         fi
         printf '%s=%s\n' "$cat" "$target" >> "$tmp"
-    done < <(grep -vE '^[[:space:]]*(#|;|$)' "${RULES_FILE}" 2>/dev/null | awk -F, '{print $NF}' | sort -u)
+    done < <(cat "${RULES_DEFAULT}" "${RULES_FILE}" 2>/dev/null | grep -vE '^[[:space:]]*(#|;|$)' | awk -F, '{print $NF}' | sort -u)
     sort -u "$tmp" > "${POLICY_MAP}"; rm -f "$tmp"
 }
 

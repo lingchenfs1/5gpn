@@ -224,10 +224,13 @@ def _reason(out, n=4):
 
 def _exit_ip():
     """Best-effort: the public egress IP as seen through the active exit."""
-    ok, out = run2(["sudo", "-u", "pxout", "curl", "-4", "-s", "--max-time", "8",
-                    "https://api.ipify.org"], timeout=12)
-    out = (out or "").strip()
-    return out if ok and re.match(r"^[0-9.]+$", out) else ""
+    for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"):
+        ok, out = run2(["sudo", "-u", "pxout", "curl", "-4", "-s", "--max-time", "10", url],
+                       timeout=14)
+        out = (out or "").strip()
+        if ok and re.match(r"^[0-9.]+$", out):
+            return out
+    return ""
 
 
 # (unit, friendly label) shown on the status card.
@@ -435,7 +438,7 @@ def op_set_exit(name):
     if ip:
         tail = "\n🌍 出口 IP：<code>%s</code>" % html.escape(ip)
     else:
-        tail = "\n⚠️ 出口 IP 获取失败——出口节点可能不可达，用「🩺 检查出口连通性」确认。"
+        tail = "\n⚠️ 出口 IP 探测未成功（仅探测失败，不一定代表不通）。如访问异常，用「🩺 检查出口连通性」确认节点。"
     return "✅ 已切换到 <b>%s</b>（%s）%s" % (html.escape(name), html.escape(t), tail)
 
 
