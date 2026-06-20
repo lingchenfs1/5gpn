@@ -774,8 +774,10 @@ def handle_message(msg):
             send(chat_id, "名字无效。请用 1-11 位小写字母/数字（不能是 local）。再发一次，或 /cancel：")
             return
         PENDING[chat_id] = {"action": "add_exit_config", "name": name}
+        # NOTE: this message contains literal '%' — inject the name by
+        # concatenation, NOT %-formatting, or Python treats '%' as a conversion.
         send(chat_id,
-             "📝 出口名 <b>%s</b> ✅\n"
+             "📝 出口名 <b>" + html.escape(name) + "</b> ✅\n"
              "现在把节点配置发给我，按类型选一种格式（含密钥/密码，会经 Telegram 传输）：\n\n"
 
              "1️⃣ <b>SOCKS5</b>\n"
@@ -797,7 +799,7 @@ def handle_message(msg):
              "仅当<b>账号本身就含冒号</b>这种极少数情况，才需要多行写法：\n"
              "<code>socks5://host:端口\nuser: 账号\npass: 密码\nremote-dns: on</code>\n\n"
 
-             "发送 /cancel 取消。" % html.escape(name))
+             "发送 /cancel 取消。")
         return
     if state and state.get("action") == "add_exit_config":
         config = msg.get("text") or ""
