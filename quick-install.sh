@@ -2,10 +2,13 @@
 #
 # One-click installer for 5gpn — downloads the repo and runs install.sh.
 #
-#   sudo bash <(curl -fsSL https://raw.githubusercontent.com/lingchenfs1/5gpn/main/quick-install.sh)
+#   curl -fsSL https://raw.githubusercontent.com/lingchenfs1/5gpn/main/quick-install.sh -o /tmp/5gpn.sh && sudo bash /tmp/5gpn.sh
+#
+# (Avoid `sudo bash <(curl ...)`: newer sudo closes the process-substitution
+#  fd, which fails as "/dev/fd/63: No such file or directory" on e.g. Debian 13.)
 #
 # Any extra args are passed straight through to install.sh, e.g.:
-#   sudo bash <(curl -fsSL .../quick-install.sh) --status
+#   sudo bash /tmp/5gpn.sh --status
 #
 set -euo pipefail
 
@@ -19,7 +22,7 @@ ok()   { echo -e "${GREEN}[OK]${NC}   $*"; }
 err()  { echo -e "${RED}[ERR]${NC}  $*" >&2; }
 
 if [[ $EUID -ne 0 ]]; then
-    err "Run as root:  sudo bash <(curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/quick-install.sh)"
+    err "Run as root:  curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/quick-install.sh -o /tmp/5gpn.sh && sudo bash /tmp/5gpn.sh"
     exit 1
 fi
 

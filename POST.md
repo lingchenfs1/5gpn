@@ -7,7 +7,7 @@
 一键安装(交互输入你自己的域名):
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/lingchenfs1/5gpn/main/quick-install.sh)
+curl -fsSL https://raw.githubusercontent.com/lingchenfs1/5gpn/main/quick-install.sh -o /tmp/5gpn.sh && sudo bash /tmp/5gpn.sh
 ```
 
 ## 思路
