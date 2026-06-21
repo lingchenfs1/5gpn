@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("API_TOKEN", "")
@@ -50,6 +51,7 @@ TRAFFIC_INTERVAL = int(re.sub(r"\D", "", os.environ.get("TRAFFIC_INTERVAL", "300
 TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
 LATENCY_FILE = os.environ.get("LATENCY_FILE", CONF_DIR + "/latency.json")
 LATENCY_INTERVAL = TRAFFIC_INTERVAL
+AI_CONF = os.environ.get("AI_CONF", CONF_DIR + "/ai.json")
 
 EXIT_NAME_RE = re.compile(r"^[a-z0-9]{1,11}$")
 CAT_RE = re.compile(r"^[A-Za-z0-9_一-鿿-]{1,40}$")
@@ -416,6 +418,138 @@ def latency_loop():
         time.sleep(LATENCY_INTERVAL)
 
 
+# --- AI assistant: bind an OpenAI-compatible API, propose a routing plan ------
+AI_SYS = (
+    "你是 5gpn 网关的分流配置助手。根据用户意图和给定的 GitHub 仓库，产出一份分流方案。\n"
+    "规则语法(每条一行): TYPE,VALUE,TARGET。TYPE ∈ {DOMAIN-SUFFIX,DOMAIN,DOMAIN-KEYWORD,"
+    "IP-CIDR,RULE-SET,GEOSITE,GEOIP}；兜底用 FINAL,TARGET。\n"
+    "RULE-SET 的 VALUE 是一个可直接 HTTP 访问的规则列表 URL(可用仓库的 raw 前缀拼接其中的规则文件路径)。\n"
+    "TARGET 必须是: 某个可用出口名 / direct / block / 或一个你新建的分类名。\n"
+    "若意图是用某出口加速(例如“走 IIJ 加速”), 把相关域名/规则集归到一个分类, 并在 policy 里把该分类映射到该出口。\n"
+    "只输出 JSON, 不要任何解释性文字或 markdown 围栏, 结构: "
+    '{"rules":["TYPE,VALUE,TARGET", ...], "policy":{"分类名":"出口名"}, "explanation":"中文一句话说明"}。\n'
+    "rules 里出现的分类名必须在 policy 里给出映射; 优先用仓库里现成的规则集文件(RULE-SET), 没有再用该服务的核心域名(DOMAIN-SUFFIX)。"
+)
+
+
+def _ai_config():
+    try:
+        return json.load(open(AI_CONF))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _save_ai_config(cfg):
+    try:
+        tmp = AI_CONF + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, AI_CONF)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _http_json(url, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": "5gpn", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read(1_000_000).decode("utf-8", "ignore"))
+
+
+def _http_text(url, timeout=20, limit=8000):
+    req = urllib.request.Request(url, headers={"User-Agent": "5gpn"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(limit).decode("utf-8", "ignore")
+
+
+def github_context(repo_url):
+    m = re.search(r"github\.com/([^/\s]+)/([^/\s#?]+)", repo_url or "")
+    if not m:
+        return None
+    owner, repo = m.group(1), m.group(2).replace(".git", "")
+    info = _http_json("https://api.github.com/repos/%s/%s" % (owner, repo))
+    branch = info.get("default_branch", "main")
+    ctx = {"owner": owner, "repo": repo, "branch": branch,
+           "description": info.get("description") or "",
+           "raw_base": "https://raw.githubusercontent.com/%s/%s/%s/" % (owner, repo, branch),
+           "files": [], "readme": ""}
+    try:
+        for it in _http_json("https://api.github.com/repos/%s/%s/contents" % (owner, repo)):
+            if it.get("type") == "file" and re.search(r"\.(list|ya?ml|txt|conf|srs)$", it.get("name", ""), re.I):
+                ctx["files"].append(it["path"])
+        ctx["files"] = ctx["files"][:40]
+    except Exception:  # noqa: BLE001
+        pass
+    for fn in ("README.md", "readme.md", "README.MD"):
+        try:
+            ctx["readme"] = _http_text(ctx["raw_base"] + fn, limit=3000)
+            if ctx["readme"]:
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    return ctx
+
+
+def ai_chat(cfg, user):
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": cfg.get("model") or "gpt-4o-mini",
+        "temperature": 0.2,
+        "messages": [{"role": "system", "content": AI_SYS}, {"role": "user", "content": user}],
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/json", "Authorization": "Bearer " + cfg["key"]})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = json.loads(r.read(2_000_000).decode("utf-8", "ignore"))
+    return data["choices"][0]["message"]["content"]
+
+
+def extract_json(text):
+    t = (text or "").strip()
+    m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
+    if m:
+        t = m.group(1).strip()
+    i, j = t.find("{"), t.rfind("}")
+    if 0 <= i < j:
+        try:
+            return json.loads(t[i:j + 1])
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def ai_plan(repo, intent):
+    cfg = _ai_config()
+    if not cfg.get("base_url") or not cfg.get("key"):
+        return None, "AI 未配置（先在面板填入 Base URL 和 Key）"
+    ctx = None
+    try:
+        ctx = github_context(repo) if repo else None
+    except Exception as e:  # noqa: BLE001
+        ctx = {"error": "仓库读取失败: %s" % e}
+    exits = [e["name"] for e in list_exits()[0]]
+    cats = list(policy_map().keys())
+    lines = ["意图: " + intent, "",
+             "可用出口: " + (", ".join(exits) or "(无)"),
+             "现有分类: " + (", ".join(cats) or "(无)")]
+    if ctx and not ctx.get("error"):
+        lines += ["", "GitHub 仓库: %s/%s" % (ctx["owner"], ctx["repo"]),
+                  "描述: " + ctx["description"], "raw 前缀: " + ctx["raw_base"]]
+        if ctx["files"]:
+            lines.append("规则文件:")
+            lines += ["  - " + f for f in ctx["files"]]
+        if ctx["readme"]:
+            lines += ["README 摘要:", ctx["readme"][:2500]]
+    elif ctx and ctx.get("error"):
+        lines += ["", ctx["error"]]
+    try:
+        raw = ai_chat(cfg, "\n".join(lines))
+    except Exception as e:  # noqa: BLE001
+        return None, "AI 调用失败: %s" % e
+    return {"plan": extract_json(raw), "raw": raw, "exits": exits}, None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
@@ -492,6 +626,10 @@ class Handler(BaseHTTPRequestHandler):
                                     "series": series, "points": pts})
         if path == "/api/exits/latency":
             return self._send(200, {"ok": True, "latency": all_latency()})
+        if path == "/api/ai/config":
+            c = _ai_config()
+            return self._send(200, {"ok": True, "configured": bool(c.get("base_url") and c.get("key")),
+                                    "base_url": c.get("base_url", ""), "model": c.get("model", "")})
         if path == "/api/exits":
             exits, cur = list_exits()
             return self._send(200, {"ok": True, "current": cur, "exits": exits})
@@ -623,6 +761,52 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/update-rules":
             ok, out = ctl("--update-rules", timeout=400)
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/ai/config":
+            cur = _ai_config()
+            base = str(b.get("base_url", "")).strip()
+            model = str(b.get("model", "")).strip()
+            key = str(b.get("key", ""))
+            if base:
+                cur["base_url"] = base
+            if model:
+                cur["model"] = model
+            if key:                       # blank key keeps the existing one
+                cur["key"] = key
+            if not cur.get("base_url") or not cur.get("key"):
+                return self._send(400, {"ok": False, "error": "need base_url and key"})
+            ok = _save_ai_config(cur)
+            return self._send(200 if ok else 500, {"ok": ok})
+
+        if path == "/api/ai/plan":
+            res, err = ai_plan(str(b.get("repo", "")).strip(), str(b.get("intent", "")).strip())
+            if err:
+                return self._send(400, {"ok": False, "error": err})
+            return self._send(200, {"ok": True, "plan": res["plan"], "raw": res["raw"]})
+
+        if path == "/api/ai/apply":
+            rules = b.get("rules") or []
+            policy = b.get("policy") or {}
+            if not isinstance(rules, list) or not isinstance(policy, dict):
+                return self._send(400, {"ok": False, "error": "invalid plan"})
+            out = []
+            for cat, tgt in policy.items():
+                cat, tgt = str(cat).strip(), str(tgt).strip()
+                if not CAT_RE.match(cat):
+                    out.append("跳过分类(名称无效): %s" % cat)
+                    continue
+                if tgt not in ("direct", "block") and not EXIT_NAME_RE.match(tgt):
+                    out.append("跳过 %s(目标无效): %s" % (cat, tgt))
+                    continue
+                ok, o = ctl("--set-policy", cat, tgt, timeout=300)
+                out.append("分类 %s -> %s: %s" % (cat, tgt, "ok" if ok else o))
+            clean = [r.strip() for r in rules if isinstance(r, str) and r.strip() and "\n" not in r][:300]
+            if clean:
+                txt = read_file(RULES_FILE)
+                txt = (txt.rstrip("\n") + "\n" + "\n".join(clean) + "\n") if txt.strip() else ("\n".join(clean) + "\n")
+                ok, o = rules_set(txt)
+                out.append("新增 %d 条规则: %s" % (len(clean), "ok" if ok else o))
+            return self._send(200, {"ok": True, "output": "\n".join(out)})
 
         return self._send(404, {"ok": False, "error": "not found"})
 

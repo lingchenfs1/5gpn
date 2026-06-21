@@ -229,6 +229,22 @@
       <!-- 智能分流 -->
       <section data-sec="routing" hidden>
         <div class="card">
+          <h2>🤖 AI 智能配置</h2>
+          <details id="aiCfgBox">
+            <summary class="muted small">AI 接口设置（绑定你自己的 API，OpenAI 兼容）</summary>
+            <div class="row" style="margin-top:8px"><input id="ai_base" type="text" placeholder="API Base URL，如 https://api.openai.com/v1"></div>
+            <div class="row"><input id="ai_key" type="password" placeholder="API Key（存服务器，不回显）"></div>
+            <div class="row"><input id="ai_model" type="text" placeholder="模型，如 gpt-4o-mini"><button class="primary" onclick="aiSaveConfig()">保存</button></div>
+            <div class="row small muted" id="ai_cfg_state"></div>
+          </details>
+          <div class="row" style="margin-top:10px"><input id="ai_repo" type="text" placeholder="GitHub 仓库链接（可选）"></div>
+          <div class="row"><input id="ai_intent" type="text" placeholder="意图，如：走 IIJ 加速 / 让某服务直连"></div>
+          <div class="row"><button class="primary" onclick="aiPlan()">✨ 生成方案</button></div>
+          <div id="ai_plan"></div>
+          <div class="small muted" style="margin-top:6px">方案仅为建议，需点“确认应用”后才会生效。</div>
+        </div>
+
+        <div class="card">
           <h2>规则组（分类 → 出口）</h2>
           <div id="policy"></div>
           <div class="row" style="margin-top:12px">
@@ -285,7 +301,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
-let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {};
+let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null;
 const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
 
 /* ---- theme (auto / light / dark) ---- */
@@ -318,7 +334,7 @@ function showSection(sec){
   closeSidebar();
   if(sec==="dash"){ loadTraffic(); loadLatency(); }
   if(sec==="exits" && !Object.keys(LAT).length) loadExitLatency();
-  if(sec==="routing") loadRules();
+  if(sec==="routing"){ loadRules(); aiLoadConfig(); }
 }
 function toggleSidebar(){ const o=$("sidebar").classList.toggle("open"); $("scrim").classList.toggle("hide", !o); }
 function closeSidebar(){ $("sidebar").classList.remove("open"); $("scrim").classList.add("hide"); }
@@ -613,6 +629,57 @@ function delRule(i){ if(confirm("删除规则 #"+i+" ?")) mutate("/api/rules/del
 function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
   if(confirm("保存并应用整份分流规则？")) mutate("/api/rules",{rules},"保存整份规则", refreshState); }
 function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList", loadStatus); }
+
+/* ---- AI assistant ---- */
+async function aiLoadConfig(){
+  try{ const c=await api("/api/ai/config");
+    $("ai_base").value=c.base_url||""; $("ai_model").value=c.model||"";
+    $("ai_cfg_state").textContent = c.configured ? "已配置 ✅（Key 已保存在服务器）" : "未配置";
+    if(!c.configured && $("aiCfgBox")) $("aiCfgBox").open=true;
+  }catch(e){}
+}
+async function aiSaveConfig(){
+  const base=$("ai_base").value.trim(), key=$("ai_key").value, model=$("ai_model").value.trim();
+  if(!base){ log("请填写 API Base URL"); return; }
+  busy(true);
+  try{ const r=await api("/api/ai/config","POST",{base_url:base,key,model});
+    log((r.ok?"✅ ":"❌ ")+"AI 配置已保存"); $("ai_key").value=""; aiLoadConfig();
+  }catch(e){ log("❌ 保存 AI 配置："+e.message); } finally{ busy(false); }
+}
+async function aiPlan(){
+  const repo=$("ai_repo").value.trim(), intent=$("ai_intent").value.trim();
+  if(!intent){ log("请填写意图"); return; }
+  $("ai_plan").innerHTML=`<div class="muted small" style="margin-top:8px">🤖 AI 生成中（读取仓库 + 推理，可能要十几秒）…</div>`;
+  busy(true);
+  try{
+    const r=await api("/api/ai/plan","POST",{repo,intent});
+    const p=r.plan;
+    if(!p || (!(p.rules||[]).length && !Object.keys(p.policy||{}).length)){
+      AIPLAN=null;
+      $("ai_plan").innerHTML=`<div class="small muted" style="margin-top:8px">未能解析出可用方案。AI 原始返回：</div><div class="mono small">${esc(r.raw||"(空)")}</div>`;
+      return;
+    }
+    AIPLAN=p;
+    const rules=p.rules||[], pol=p.policy||{};
+    $("ai_plan").innerHTML =
+      `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">`+
+      (p.explanation?`<div class="small">${esc(p.explanation)}</div>`:"")+
+      `<div class="small muted" style="margin-top:8px">将新增规则（${rules.length}）</div>`+
+      `<div class="mono small">${rules.map(esc).join("\n")||"(无)"}</div>`+
+      `<div class="small muted" style="margin-top:8px">分类 → 出口</div>`+
+      `<div class="mono small">${Object.entries(pol).map(([k,v])=>esc(k+" → "+v)).join("\n")||"(无)"}</div>`+
+      `<div class="row" style="margin-top:12px"><button class="primary" onclick="aiApply()">✅ 确认应用</button><button onclick="aiCancel()">取消</button></div>`+
+      `</div>`;
+  }catch(e){ AIPLAN=null; $("ai_plan").innerHTML=""; log("❌ 生成方案："+e.message); }
+  finally{ busy(false); }
+}
+function aiCancel(){ AIPLAN=null; $("ai_plan").innerHTML=""; }
+async function aiApply(){
+  if(!AIPLAN) return;
+  if(!confirm("确认应用该 AI 方案？将修改分流规则与分类映射。")) return;
+  const ok=await mutate("/api/ai/apply",{rules:AIPLAN.rules||[],policy:AIPLAN.policy||{}},"应用 AI 方案", refreshState);
+  if(ok){ AIPLAN=null; $("ai_plan").innerHTML=""; }
+}
 
 // restore saved creds
 (function(){ const u=localStorage.getItem("pgw_url"), t=localStorage.getItem("pgw_token");

@@ -31,6 +31,12 @@ done
 for fn in 'def ping_ms' 'def tcp_ms' 'def measure_latency' 'def latency_tick' '/api/latency' '/api/exits/latency'; do
     [[ "${api_body}" == *"${fn}"* ]] || fail "API missing latency: ${fn}"
 done
+# AI assistant (bind own API -> propose plan -> manual apply)
+for fn in 'def ai_plan' 'def ai_chat' 'def github_context' '/api/ai/config' '/api/ai/plan' '/api/ai/apply'; do
+    [[ "${api_body}" == *"${fn}"* ]] || fail "API missing AI: ${fn}"
+done
+# the AI key must be stored server-side and never returned by the config GET
+[[ "${api_body}" == *'"configured": bool('* ]] || fail "AI config GET must not expose the key"
 # same backend as the bot -> in sync
 [[ "${api_body}" == *'proxy-gateway-ctl'* ]] || fail "API must shell out to proxy-gateway-ctl (shared backend)"
 # CORS so a web page hosted elsewhere can call it
@@ -67,5 +73,7 @@ web="$(cat "${here}/webui/index.html")"
 [[ "${web}" == *'createGroup'* && "${web}" == *'renameGroup'* && "${web}" == *'delGroup'* ]] || fail "web panel must manage rule groups"
 # panel: per-exit latency + 24h latency chart
 [[ "${web}" == *'loadExitLatency'* && "${web}" == *'latPill'* && "${web}" == *'drawLatency'* && "${web}" == *'latChart'* ]] || fail "web panel must show exit latency + chart"
+# panel: AI assistant with mandatory manual confirm
+[[ "${web}" == *'aiPlan'* && "${web}" == *'aiApply'* && "${web}" == *'确认应用'* ]] || fail "web panel must have AI plan + confirm"
 
 echo "api control surface OK"
