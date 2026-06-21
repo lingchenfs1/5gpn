@@ -141,6 +141,32 @@ def memory():
         return {}
 
 
+def parse_rules(text):
+    """Parse non-comment rule lines into {i (1-based), raw, type, value, target}."""
+    out, i = [], 0
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s or s[0] in "#;":
+            continue
+        i += 1
+        parts = [p.strip() for p in s.split(",")]
+        typ = parts[0].upper() if parts else ""
+        if typ == "FINAL" and len(parts) >= 2:
+            value, target = "", parts[-1]
+        elif len(parts) >= 3:
+            value, target = ",".join(parts[1:-1]), parts[-1]
+        elif len(parts) == 2:
+            value, target = parts[1], ""
+        else:
+            value, target = "", ""
+        out.append({"i": i, "raw": s, "type": typ, "value": value, "target": target})
+    return out
+
+
+def rules_set(text):
+    return ctl("--set-rules", inp=text, timeout=400)
+
+
 def parse_check(out):
     res = []
     for line in out.splitlines():
@@ -354,8 +380,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "policy": policy_map()})
         if path == "/api/rules":
             txt = read_file(RULES_FILE)
-            n = len([x for x in txt.splitlines() if x.strip() and not x.strip().startswith("#")])
-            return self._send(200, {"ok": True, "count": n, "rules": txt})
+            entries = parse_rules(txt)
+            return self._send(200, {"ok": True, "count": len(entries), "rules": txt, "entries": entries})
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -406,7 +432,35 @@ class Handler(BaseHTTPRequestHandler):
             rules = b.get("rules", "")
             if not isinstance(rules, str) or not rules.strip():
                 return self._send(400, {"ok": False, "error": "empty rules"})
-            ok, out = ctl("--set-rules", inp=rules, timeout=400)
+            ok, out = rules_set(rules)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/rules/add":
+            rule = str(b.get("rule", "")).strip()
+            if not rule or "\n" in rule or len(rule) > 2000:
+                return self._send(400, {"ok": False, "error": "invalid rule"})
+            txt = read_file(RULES_FILE)
+            newtext = (txt.rstrip("\n") + "\n" + rule + "\n") if txt.strip() else (rule + "\n")
+            ok, out = rules_set(newtext)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/rules/del":
+            try:
+                idx = int(b.get("index"))
+            except (TypeError, ValueError):
+                return self._send(400, {"ok": False, "error": "invalid index"})
+            keep, n, dropped = [], 0, False
+            for ln in read_file(RULES_FILE).splitlines():
+                s = ln.strip()
+                if s and s[0] not in "#;":
+                    n += 1
+                    if n == idx:
+                        dropped = True
+                        continue
+                keep.append(ln)
+            if not dropped:
+                return self._send(400, {"ok": False, "error": "index out of range"})
+            ok, out = rules_set("\n".join(keep) + "\n")
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
 
         if path == "/api/update-rules":

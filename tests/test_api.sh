@@ -14,9 +14,11 @@ python3 -m py_compile "${here}/api-server.py" || fail "api-server.py must compil
 [[ "${api_body}" == *'load_cert_chain'* ]] || fail "API must serve TLS"
 [[ "${api_body}" == *'len(TOKEN) < 16'* ]] || fail "API must refuse a missing/short token"
 for ep in '/api/health' '/api/status' '/api/exits/set' '/api/exits/add' '/api/exits/del' \
-          '/api/exits/check' '/api/policy' '/api/rules' '/api/update-rules' '/api/traffic'; do
+          '/api/exits/check' '/api/policy' '/api/rules' '/api/rules/add' '/api/rules/del' \
+          '/api/update-rules' '/api/traffic'; do
     [[ "${api_body}" == *"${ep}"* ]] || fail "API missing endpoint: ${ep}"
 done
+[[ "${api_body}" == *'def parse_rules'* ]] || fail "API must parse rules into structured entries"
 # resources (cpu/mem/disk/uptime/load) + 24h traffic collector
 for fn in 'def resources' 'cpu_percent' 'statvfs' 'uptime_sec' 'def read_net_dev' 'def traffic_tick' 'def traffic_loop'; do
     [[ "${api_body}" == *"${fn}"* ]] || fail "API missing: ${fn}"
@@ -48,5 +50,7 @@ web="$(cat "${here}/webui/index.html")"
 # panel: 24h traffic chart + resource bars
 [[ "${web}" == *'/api/traffic'* && "${web}" == *'drawChart'* && "${web}" == *'getContext'* ]] || fail "web panel must render a traffic chart"
 [[ "${web}" == *'resBar'* && "${web}" == *'cpu_percent'* && "${web}" == *'硬盘'* ]] || fail "web panel must show CPU/mem/disk resource bars"
+# panel: detailed per-rule control (add one / delete one / list)
+[[ "${web}" == *'/api/rules/add'* && "${web}" == *'/api/rules/del'* && "${web}" == *'renderRuleList'* ]] || fail "web panel must support per-rule add/delete"
 
 echo "api control surface OK"

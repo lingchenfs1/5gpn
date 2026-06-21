@@ -50,6 +50,13 @@
   .bar { height:9px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
   .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
   #out { max-height:220px; overflow:auto; }
+  #rulelist { max-height:300px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
+  .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--line); }
+  .rrow:first-child { border-top:none; }
+  .rrow .mono { flex:1; word-break:break-all; }
+  .rrow .idx { color:var(--mut); min-width:30px; }
+  .rrow button { min-height:34px; padding:5px 10px; }
+  details > summary { cursor:pointer; list-style:revert; }
   #chart { width:100%; height:200px; display:block; }
   #conn { word-break:break-all; }
   .res { margin-top:12px; }
@@ -132,11 +139,35 @@
 
     <div class="card">
       <div class="row"><h2 class="grow">分流规则</h2>
-        <button onclick="loadRules()">读取</button>
+        <span class="muted small" id="rules_meta"></span>
+        <button onclick="loadRules()">🔄 读取</button>
         <button onclick="updateRules()">⟳ 更新规则集</button></div>
-      <div class="row small muted" id="rules_meta"></div>
-      <div class="row"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
-      <div class="row"><button class="primary" onclick="saveRules()">💾 保存并应用</button></div>
+
+      <div class="row" style="margin-top:6px">
+        <select id="r_type">
+          <option>DOMAIN-SUFFIX</option><option>DOMAIN</option><option>DOMAIN-KEYWORD</option>
+          <option>IP-CIDR</option><option>RULE-SET</option><option>GEOSITE</option>
+          <option>GEOIP</option><option>FINAL</option>
+        </select>
+        <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
+      </div>
+      <div class="row">
+        <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 分类(如 AI)" list="tgtlist">
+        <datalist id="tgtlist"></datalist>
+        <button class="primary" onclick="addRule()">➕ 添加一条</button>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
+        <span class="muted small" id="r_count"></span>
+      </div>
+      <div id="rulelist"></div>
+
+      <details style="margin-top:10px">
+        <summary class="muted small">高级：直接编辑整份规则文本</summary>
+        <div class="row" style="margin-top:8px"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
+        <div class="row"><button class="primary" onclick="saveRules()">💾 保存整份并应用</button></div>
+      </details>
     </div>
 
     <div class="card">
@@ -292,11 +323,40 @@ async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await a
 async function setPolicy(cat){ const tgt=$("pol_"+cat).value; log("⏳ "+cat+" → "+tgt+" …");
   try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
 
-async function loadRules(){ try{ const r=await api("/api/rules"); $("rules").value=r.rules||"";
-  $("rules_meta").textContent="共 "+(r.count||0)+" 条规则"; }catch(e){ log("❌ "+e.message);} }
+let RULES=[];
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
+  $("rules_meta").textContent="共 "+(r.count||0)+" 条";
+  const tgts=[...new Set(RULES.map(e=>e.target).filter(Boolean).concat(["direct","block"]))].sort();
+  $("tgtlist").innerHTML=tgts.map(t=>`<option value="${esc(t)}">`).join("");
+  renderRuleList();
+}catch(e){ log("❌ "+e.message);} }
+function renderRuleList(){
+  const q=($("r_filter").value||"").trim().toLowerCase();
+  const rows=RULES.filter(e=>!q||e.raw.toLowerCase().includes(q));
+  $("r_count").textContent=q?(rows.length+"/"+RULES.length):(RULES.length+" 条");
+  $("rulelist").innerHTML = rows.length? rows.map(e=>
+    `<div class="rrow"><span class="idx">#${e.i}</span><span class="mono">${esc(e.raw)}</span>`+
+    `<button class="danger" onclick="delRule(${e.i})">删</button></div>`).join("")
+    : `<div class="rrow muted small">无匹配规则</div>`;
+}
+async function addRule(){
+  const type=$("r_type").value, val=$("r_val").value.trim(), tgt=$("r_tgt").value.trim();
+  if(!tgt){ log("请填目标"); return; }
+  if(type!=="FINAL" && !val){ log("请填规则值"); return; }
+  const rule = type==="FINAL" ? ("FINAL,"+tgt) : (type+","+val+","+tgt);
+  log("⏳ 添加规则："+rule);
+  try{ const r=await api("/api/rules/add","POST",{rule});
+    log((r.ok?"✅ ":"❌ ")+"添加规则\n"+(r.output||""));
+    if(r.ok){ $("r_val").value=""; loadRules(); }
+  }catch(e){ log("❌ "+e.message);} }
+async function delRule(i){ if(!confirm("删除规则 #"+i+" ?"))return; log("⏳ 删除规则 #"+i+"…");
+  try{ const r=await api("/api/rules/del","POST",{index:i});
+    log((r.ok?"✅ ":"❌ ")+"删除 #"+i+"\n"+(r.output||"")); if(r.ok) loadRules();
+  }catch(e){ log("❌ "+e.message);} }
 async function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
-  if(!confirm("保存并应用这份分流规则？"))return; log("⏳ 保存规则（可能需要拉取规则集）…");
-  try{ const r=await api("/api/rules","POST",{rules}); log((r.ok?"✅ ":"❌ ")+"保存规则\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+  if(!confirm("保存并应用整份分流规则？"))return; log("⏳ 保存规则（可能需要拉取规则集）…");
+  try{ const r=await api("/api/rules","POST",{rules}); log((r.ok?"✅ ":"❌ ")+"保存规则\n"+(r.output||"")); loadRules(); loadStatus(); }catch(e){ log("❌ "+e.message);} }
 async function updateRules(){ log("⏳ 更新 GFWList/ChinaList…"); try{ const r=await api("/api/update-rules","POST",{}); log((r.ok?"✅ ":"❌ ")+"更新规则\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
 
 // restore saved creds
