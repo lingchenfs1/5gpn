@@ -202,6 +202,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
+let RULES = [], lastTraffic = null;   // declared before any function that may run at init (theme)
 
 /* ---- theme (auto / light / dark) ---- */
 const THEMES = ["auto","light","dark"], THEME_ICON = {auto:"🌓 跟随", light:"☀️ 白天", dark:"🌙 夜间"};
@@ -291,7 +292,6 @@ const COLORS = ["#4f8cff","#2ecc71","#f5a623","#ff5c5c","#a06cff","#19c3c3","#ff
 function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).toFixed(0)+" Kbps"; }
 function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
   return b.toFixed(b<10&&i>0?1:0)+u[i]; }
-let lastTraffic=null;
 async function loadTraffic(){ try{ drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
 window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); });
 function drawChart(d){
@@ -365,7 +365,6 @@ async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await a
 async function setPolicy(cat){ const tgt=$("pol_"+cat).value; log("⏳ "+cat+" → "+tgt+" …");
   try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
 
-let RULES=[];
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
   $("rules_meta").textContent="共 "+(r.count||0)+" 条";
