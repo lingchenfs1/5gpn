@@ -196,6 +196,13 @@
     <div class="content">
       <!-- 概览 -->
       <section data-sec="dash">
+        <div class="card">
+          <div class="row"><h2 class="grow">实时</h2>
+            <label class="small muted" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="autoref" onchange="toggleAuto()" style="min-height:auto;width:auto;flex:none"> 自动刷新</label>
+          </div>
+          <div id="live" class="row" style="gap:18px;font-size:15px"><span class="muted small">点“自动刷新”或刷新查看实时速率</span></div>
+        </div>
         <div class="tiles" id="tiles"></div>
         <div class="card">
           <div class="row"><h2 class="grow">24 小时流量趋势</h2><button onclick="loadTraffic()">🔄</button></div>
@@ -250,6 +257,22 @@
         </div>
 
         <div class="card">
+          <h2>🔧 工具</h2>
+          <div class="small muted">域名路由测试 —— 看它会不会进网关、走哪个出口</div>
+          <div class="row" style="margin-top:6px">
+            <input id="rt_domain" type="text" placeholder="域名，如 youtube.com">
+            <button onclick="routeTest()">测试</button>
+          </div>
+          <div id="rt_result" class="small" style="margin-top:8px"></div>
+          <div class="small muted" style="margin-top:14px">一键加速 / 直连某域名（自动处理「劫持 + 路由」两层）</div>
+          <div class="row" style="margin-top:6px">
+            <input id="pd_domain" type="text" placeholder="域名，如 chat.openai.com">
+            <select id="pd_target"></select>
+            <button class="primary" onclick="proxyDomain()">应用</button>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>规则组（分类 → 出口）</h2>
           <div id="policy"></div>
           <div class="row" style="margin-top:12px">
@@ -292,6 +315,15 @@
 
       <!-- 控制台 -->
       <section data-sec="console" hidden>
+        <div class="card">
+          <h2>配置备份 / 恢复</h2>
+          <div class="row">
+            <button class="primary" onclick="backupConfig()">⬇️ 下载备份</button>
+            <button onclick="$('restoreFile').click()">⬆️ 恢复备份</button>
+            <input type="file" id="restoreFile" accept=".gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
+          </div>
+          <div class="small muted" style="margin-top:6px">备份含出口配置（含密码/密钥），请妥善保管。恢复后会重建路由。</div>
+        </div>
         <div class="card">
           <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
           <div id="out" class="mono"></div>
@@ -337,7 +369,7 @@ function showSection(sec){
   $("secTitle").textContent = SEC_TITLE[sec]||"";
   localStorage.setItem("pgw_sec", sec);
   closeSidebar();
-  if(sec==="dash"){ loadTraffic(); loadLatency(); }
+  if(sec==="dash"){ loadTraffic(); loadLatency(); loadLive(); }
   if(sec==="exits" && !Object.keys(LAT).length) loadExitLatency();
   if(sec==="routing"){ loadRules(); aiLoadConfig(); }
 }
@@ -411,6 +443,7 @@ async function connect() {
     $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
     loadStatus(); loadRules();
     showSection(localStorage.getItem("pgw_sec")||"dash");
+    $("autoref").checked = localStorage.getItem("pgw_auto")==="1"; toggleAuto();
   } catch(e) {
     $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
   }
@@ -565,6 +598,7 @@ function renderPolicy(policy, exits) {
   const box = $("policy");
   const targets = ["direct","block"].concat((exits||[]).map(e=>e.name));   // valid policy targets
   if($("g_tgt")) $("g_tgt").innerHTML = targets.map(t=>`<option>${esc(t)}</option>`).join("");
+  if($("pd_target")) $("pd_target").innerHTML = (exits||[]).map(e=>e.name).concat(["direct","block"]).map(t=>`<option>${esc(t)}</option>`).join("");
   const ents = Object.entries(policy||{});
   if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无规则组，下面新建一个，或在“分流规则”里添加规则后自动出现）</div>`; return; }
   box.innerHTML = ents.map(([cat,tgt])=>{
@@ -673,6 +707,64 @@ function delRule(i){ if(confirm("删除规则 #"+i+" ?")) mutate("/api/rules/del
 function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
   if(confirm("保存并应用整份分流规则？")) mutate("/api/rules",{rules},"保存整份规则", refreshState); }
 function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList", loadStatus); }
+
+/* ---- live dashboard (auto-refresh) ---- */
+let autoTimer=null, liveTimer=null;
+function fmtBps(bytes){ const b=(bytes||0)*8; return b>=1e6?(b/1e6).toFixed(1)+" Mbps":b>=1e3?(b/1e3).toFixed(0)+" Kbps":b.toFixed(0)+" bps"; }
+async function loadLive(){ try{ const d=await api("/api/live");
+  $("live").innerHTML = `<span>↓ <b>${fmtBps(d.server.rx)}</b></span><span>↑ <b>${fmtBps(d.server.tx)}</b></span>`+
+    `<span>🔗 连接 <b>${d.conns}</b></span>`+
+    Object.entries(d.exits||{}).filter(([k,v])=>v.rx+v.tx>0).map(([k,v])=>`<span class="muted small">${esc(k)} ↓${fmtBps(v.rx)} ↑${fmtBps(v.tx)}</span>`).join("");
+}catch(e){} }
+function toggleAuto(){
+  const on=$("autoref").checked; localStorage.setItem("pgw_auto", on?"1":"0");
+  if(liveTimer){clearInterval(liveTimer);liveTimer=null;} if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+  if(on){ loadLive(); liveTimer=setInterval(loadLive,3000);
+    autoTimer=setInterval(()=>{ loadStatus(); loadTraffic(); loadLatency(); },20000); }
+}
+
+/* ---- route tester + one-click proxy a domain ---- */
+async function routeTest(){
+  const dm=$("rt_domain").value.trim(); if(!dm){ log("请输入域名"); return; }
+  $("rt_result").innerHTML=`<span class="muted">测试中…</span>`;
+  try{ const r=await api("/api/route/test","POST",{domain:dm}); const x=r.result||{};
+    if(x.error){ $("rt_result").textContent=x.error; return; }
+    $("rt_result").innerHTML =
+      `劫持进网关：<b>${x.hijacked?"是 ✅":"否（客户端直连，不经网关）"}</b><br>`+
+      `命中规则：<span class="mono">${esc(x.matched)}</span><br>`+
+      `最终走：<b>${esc(x.target)}</b>（分类 ${esc(x.category)}）<br>`+
+      `<span class="muted">${esc(x.note)}</span>`;
+  }catch(e){ $("rt_result").textContent="测试失败："+e.message; }
+}
+async function proxyDomain(){
+  const dm=$("pd_domain").value.trim(), tg=$("pd_target").value;
+  if(!dm){ log("请输入域名"); return; }
+  const ok=await mutate("/api/proxy-domain",{domain:dm,target:tg},"一键 "+dm+" → "+tg, refreshState);
+  if(ok) $("pd_domain").value="";
+}
+
+/* ---- config backup / restore ---- */
+async function backupConfig(){
+  log("⏳ 生成备份…"); busy(true);
+  try{ const r=await api("/api/backup");
+    const bin=Uint8Array.from(atob(r.data), c=>c.charCodeAt(0));
+    const url=URL.createObjectURL(new Blob([bin],{type:"application/gzip"}));
+    const a=document.createElement("a"); a.href=url; a.download=r.filename||"5gpn-backup.tar.gz"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000); log("✅ 备份已下载");
+  }catch(e){ log("❌ 备份："+e.message); } finally{ busy(false); }
+}
+function restoreConfig(input){
+  const f=input.files[0]; if(!f) return;
+  if(!confirm("用该备份覆盖当前配置并重建路由？")){ input.value=""; return; }
+  const rd=new FileReader();
+  rd.onload=async()=>{
+    let bin=""; const u=new Uint8Array(rd.result);
+    for(let i=0;i<u.length;i++) bin+=String.fromCharCode(u[i]);
+    await mutate("/api/restore",{data:btoa(bin)},"恢复备份", refreshState);
+    input.value="";
+  };
+  rd.readAsArrayBuffer(f);
+}
 
 /* ---- AI assistant ---- */
 async function aiLoadConfig(){

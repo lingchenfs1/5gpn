@@ -19,11 +19,14 @@ Env (systemd EnvironmentFile):
   MGMT              path to proxy-gateway-ctl       (default /opt/proxy-gateway/bin/proxy-gateway-ctl)
   CONF_DIR          gateway state dir               (default /opt/proxy-gateway/etc)
 """
+import base64
 import hmac
+import io
 import json
 import os
 import re
 import socket
+import tarfile
 import ssl
 import subprocess
 import sys
@@ -550,6 +553,128 @@ def ai_plan(repo, intent):
     return {"plan": extract_json(raw), "raw": raw, "exits": exits}, None
 
 
+# --- live stats (instantaneous rate + connection count) ----------------------
+def live_stats():
+    primary = primary_iface()
+    a = read_net_dev()
+    time.sleep(1.0)
+    b = read_net_dev()
+
+    def rate(n):
+        if n in a and n in b:
+            return max(0, b[n]["rx"] - a[n]["rx"]), max(0, b[n]["tx"] - a[n]["tx"])
+        return 0, 0
+    srx, stx = rate(primary)
+    exits = {}
+    for n in b:
+        if n.startswith("pgw-"):
+            rx, tx = rate(n)
+            exits[n[4:]] = {"rx": rx, "tx": tx}
+    conns = 0
+    ok, out = run(["ss", "-tnH", "state", "established"], timeout=4)
+    if ok:
+        conns = len([x for x in out.splitlines() if x.strip()])
+    return {"server": {"rx": srx, "tx": stx}, "exits": exits, "conns": conns}
+
+
+# --- route tester: would this domain be hijacked, and to which exit? ----------
+def gfwlist_set():
+    s = set()
+    for line in read_file("/etc/dnsdist/gfwlist.lua").splitlines():
+        m = re.search(r'newDNSName\("([^"]+)"\)', line)
+        if m:
+            s.add(m.group(1).lower().strip("."))
+    return s
+
+
+def _domain_hijacked(d, gset):
+    parts = d.split(".")
+    for i in range(len(parts) - 1):
+        if ".".join(parts[i:]) in gset:
+            return True
+    return d in gset
+
+
+def route_test(domain):
+    d = (domain or "").lower().strip().strip(".").lstrip("*.")
+    if not d or "." not in d:
+        return {"error": "请输入合法域名"}
+    gset = gfwlist_set()
+    final = None
+    matched = None
+    for raw in read_file(RULES_FILE).splitlines():
+        s = raw.strip()
+        if not s or s[0] in "#;":
+            continue
+        p = [x.strip() for x in s.split(",")]
+        typ = p[0].upper()
+        if typ == "FINAL" and len(p) >= 2:
+            final = p[-1]
+            continue
+        if matched:
+            continue
+        if typ == "DOMAIN-SUFFIX" and len(p) >= 3:
+            v = p[1].lower().lstrip(".")
+            if d == v or d.endswith("." + v):
+                matched = (s, p[-1])
+        elif typ == "DOMAIN" and len(p) >= 3 and d == p[1].lower():
+            matched = (s, p[-1])
+        elif typ == "DOMAIN-KEYWORD" and len(p) >= 3 and p[1].lower() in d:
+            matched = (s, p[-1])
+    pm = policy_map()
+    cat = matched[1] if matched else (final or "Proxy")
+    target = cat if cat in ("direct", "block") else pm.get(cat, cat)
+    return {"domain": d, "hijacked": _domain_hijacked(d, gset),
+            "matched": matched[0] if matched else ("FINAL," + (final or "?")),
+            "category": cat, "target": target,
+            "note": "RULE-SET / GEOSITE / IP-CIDR 规则未在此展开，结果以显式域名规则与 FINAL 为准"}
+
+
+# --- config backup / restore -------------------------------------------------
+BACKUP_PATHS = ["etc/proxy-gateway", "etc/dnsdist/gfwlist-extra-local.txt",
+                "etc/wireguard", "opt/proxy-gateway/etc/current-exit"]
+
+
+def make_backup():
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for rel in BACKUP_PATHS:
+            full = "/" + rel
+            if not os.path.exists(full):
+                continue
+            if rel == "etc/wireguard":
+                for f in os.listdir(full):           # only pgw-*.conf
+                    if f.startswith("pgw-") and f.endswith(".conf"):
+                        tf.add(os.path.join(full, f), arcname=rel + "/" + f)
+            elif rel == "etc/proxy-gateway":
+                tf.add(full, arcname=rel, filter=lambda ti: None if "/rulesets" in ti.name else ti)
+            else:
+                tf.add(full, arcname=rel)
+    return buf.getvalue()
+
+
+def _backup_allowed(name):
+    name = name.lstrip("./")
+    if ".." in name.split("/"):
+        return False
+    return bool(name.startswith("etc/proxy-gateway") or name == "etc/dnsdist/gfwlist-extra-local.txt"
+                or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
+                or name == "opt/proxy-gateway/etc/current-exit")
+
+
+def restore_backup(b64):
+    raw = base64.b64decode(b64)
+    tf = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
+    members = [m for m in tf.getmembers() if (m.isfile() or m.isdir()) and _backup_allowed(m.name)]
+    if not members:
+        return False, "备份内容无效（无可识别的配置文件）"
+    tf.extractall("/", members=members)
+    ctl("--set-rules", inp=read_file(RULES_FILE), timeout=400)   # rebuild router from restored rules
+    run(["systemctl", "reload", "dnsdist"], timeout=20)
+    run(["/usr/local/bin/proxy-gateway-apply-exit.sh"], timeout=30)
+    return True, "已恢复 %d 个文件，并重建路由。如需重建劫持名单可再执行『更新规则集』。" % len(members)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
@@ -630,6 +755,15 @@ class Handler(BaseHTTPRequestHandler):
             c = _ai_config()
             return self._send(200, {"ok": True, "configured": bool(c.get("base_url") and c.get("key")),
                                     "base_url": c.get("base_url", ""), "model": c.get("model", "")})
+        if path == "/api/live":
+            return self._send(200, dict(ok=True, **live_stats()))
+        if path == "/api/backup":
+            try:
+                data = make_backup()
+                return self._send(200, {"ok": True, "filename": "5gpn-backup.tar.gz",
+                                        "data": base64.b64encode(data).decode()})
+            except Exception as e:  # noqa: BLE001
+                return self._send(500, {"ok": False, "error": str(e)})
         if path == "/api/exits":
             exits, cur = list_exits()
             return self._send(200, {"ok": True, "current": cur, "exits": exits})
@@ -777,6 +911,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False, "error": "need base_url and key"})
             ok = _save_ai_config(cur)
             return self._send(200 if ok else 500, {"ok": ok})
+
+        if path == "/api/route/test":
+            return self._send(200, {"ok": True, "result": route_test(str(b.get("domain", "")))})
+
+        if path == "/api/proxy-domain":
+            domain = str(b.get("domain", "")).strip().lower()
+            target = str(b.get("target", "")).strip()
+            if not re.match(r"^[a-z0-9.-]{2,253}$", domain) or "." not in domain:
+                return self._send(400, {"ok": False, "error": "域名无效"})
+            if target not in ("direct", "block") and not EXIT_NAME_RE.match(target):
+                return self._send(400, {"ok": False, "error": "目标无效"})
+            ok, out = ctl("--proxy-domain", domain, target, timeout=400)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/restore":
+            try:
+                ok, msg = restore_backup(str(b.get("data", "")))
+                return self._send(200 if ok else 400, {"ok": ok, "output": msg})
+            except Exception as e:  # noqa: BLE001
+                return self._send(500, {"ok": False, "error": "恢复失败: %s" % e})
 
         if path == "/api/ai/plan":
             res, err = ai_plan(str(b.get("repo", "")).strip(), str(b.get("intent", "")).strip())

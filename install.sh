@@ -182,6 +182,8 @@ Options:
                  Map a rule category (group) to an egress target, then rebuild.
   --del-policy <category>      Remove a rule group from the policy map.
   --rename-policy <old> <new>  Rename a rule group (updates rules + map).
+  --proxy-domain <domain> <exit|direct|block>
+                 One-click: hijack a domain into the gateway AND route it.
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
@@ -1922,6 +1924,38 @@ rename_policy() {
     regen_smart
 }
 
+# One-click: route a single domain to a target, handling BOTH layers —
+# hijack it into the gateway (GFWList) AND add a top-priority smart rule.
+proxy_domain() {
+    local domain="${1:-}" target="${2:-}"
+    [[ -z "$domain" || -z "$target" ]] && { err "Usage: $0 --proxy-domain <domain> <exit|direct|block>"; exit 1; }
+    [[ "$domain" =~ ^[a-z0-9.-]+$ && "$domain" == *.* ]] || { err "Invalid domain"; exit 1; }
+    case "$target" in
+        direct|block) ;;
+        *) exit_exists "$target" || { err "Unknown target '$target' (exit name / direct / block)"; exit 1; } ;;
+    esac
+    mkdir -p "${EXITS_DIR}"; touch "${RULES_FILE}"
+    local esc="${domain//./\\.}" rule="DOMAIN-SUFFIX,${domain},${target}"
+    # 1) smart rule, top priority (replace any prior rule for the same domain)
+    grep -vE "^DOMAIN-SUFFIX,${esc}," "${RULES_FILE}" > "${RULES_FILE}.tmp" 2>/dev/null || true
+    { echo "$rule"; cat "${RULES_FILE}.tmp"; } > "${RULES_FILE}"; rm -f "${RULES_FILE}.tmp"
+    # 2) hijack layer
+    local extra="/etc/dnsdist/gfwlist-extra-local.txt" lua="/etc/dnsdist/gfwlist.lua"
+    mkdir -p /etc/dnsdist; touch "$extra"
+    if [[ "$target" == "direct" ]]; then
+        grep -vxF "$domain" "$extra" > "$extra.tmp" 2>/dev/null || true; mv "$extra.tmp" "$extra"
+        [[ -f "$lua" ]] && sed -i "/newDNSName(\"${esc}\")/d" "$lua"
+    else
+        grep -qxF "$domain" "$extra" || echo "$domain" >> "$extra"
+        if [[ -f "$lua" ]] && ! grep -q "newDNSName(\"${esc}\")" "$lua"; then
+            echo "gfwList:add(newDNSName(\"${domain}\"))" >> "$lua"
+        fi
+    fi
+    systemctl reload dnsdist 2>/dev/null || systemctl restart dnsdist 2>/dev/null || true
+    ok "Domain '${domain}' -> ${target}  (hijack: $([[ "$target" == direct ]] && echo off || echo on))"
+    regen_smart
+}
+
 show_rules() {
     if [[ -f "${RULES_FILE}" ]]; then
         cat "${RULES_FILE}"
@@ -2449,6 +2483,10 @@ case "${1:-}" in
     --rename-policy)
         check_root
         rename_policy "${2:-}" "${3:-}"
+        ;;
+    --proxy-domain)
+        check_root
+        proxy_domain "${2:-}" "${3:-}"
         ;;
     --show-policy)
         show_policy

@@ -37,6 +37,14 @@ for fn in 'def ai_plan' 'def ai_chat' 'def github_context' '/api/ai/config' '/ap
 done
 # the AI key must be stored server-side and never returned by the config GET
 [[ "${api_body}" == *'"configured": bool('* ]] || fail "AI config GET must not expose the key"
+# live stats / route tester / one-click proxy-domain / backup+restore
+for fn in 'def live_stats' 'def route_test' 'def make_backup' 'def restore_backup' '_backup_allowed' \
+          '/api/live' '/api/route/test' '/api/proxy-domain' '/api/backup' '/api/restore'; do
+    [[ "${api_body}" == *"${fn}"* ]] || fail "API missing: ${fn}"
+done
+# restore must reject paths outside the allow-list
+[[ "${api_body}" == *'".." in name.split'* ]] || fail "restore must block path traversal"
+[[ "${install_body}" == *'proxy_domain()'* && "${install_body}" == *'--proxy-domain)'* ]] || fail "ctl must support --proxy-domain"
 # same backend as the bot -> in sync
 [[ "${api_body}" == *'proxy-gateway-ctl'* ]] || fail "API must shell out to proxy-gateway-ctl (shared backend)"
 # CORS so a web page hosted elsewhere can call it
@@ -75,5 +83,9 @@ web="$(cat "${here}/webui/index.html")"
 [[ "${web}" == *'loadExitLatency'* && "${web}" == *'latPill'* && "${web}" == *'drawLatency'* && "${web}" == *'latChart'* ]] || fail "web panel must show exit latency + chart"
 # panel: AI assistant with mandatory manual confirm
 [[ "${web}" == *'aiPlan'* && "${web}" == *'aiApply'* && "${web}" == *'确认应用'* ]] || fail "web panel must have AI plan + confirm"
+# panel: live dashboard + route tester + one-click + backup/restore
+[[ "${web}" == *'loadLive'* && "${web}" == *'toggleAuto'* ]] || fail "web panel must have live/auto-refresh"
+[[ "${web}" == *'routeTest'* && "${web}" == *'proxyDomain'* ]] || fail "web panel must have route tester + one-click proxy"
+[[ "${web}" == *'backupConfig'* && "${web}" == *'restoreConfig'* ]] || fail "web panel must have backup/restore"
 
 echo "api control surface OK"
