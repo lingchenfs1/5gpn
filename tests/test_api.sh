@@ -49,7 +49,9 @@ web="$(cat "${here}/webui/index.html")"
 [[ "${web}" == *'/api/status'* && "${web}" == *'Bearer'* ]] || fail "web panel must call the API with a Bearer token"
 # panel: 24h traffic chart + resource bars
 [[ "${web}" == *'/api/traffic'* && "${web}" == *'drawChart'* && "${web}" == *'getContext'* ]] || fail "web panel must render a traffic chart"
-[[ "${web}" == *'resBar'* && "${web}" == *'cpu_percent'* && "${web}" == *'硬盘'* ]] || fail "web panel must show CPU/mem/disk resource bars"
+[[ "${web}" == *'cpu_percent'* && "${web}" == *'硬盘'* && "${web}" == *'class="tiles"'* ]] || fail "web panel must show CPU/mem/disk resource tiles"
+# UniFi-style layout: sidebar nav + sections
+[[ "${web}" == *'class="sidebar"'* && "${web}" == *'showSection'* && "${web}" == *'data-sec="dash"'* ]] || fail "web panel must use the sidebar/section layout"
 # panel: detailed per-rule control (add one / delete one / list)
 [[ "${web}" == *'/api/rules/add'* && "${web}" == *'/api/rules/del'* && "${web}" == *'renderRuleList'* ]] || fail "web panel must support per-rule add/delete"
 

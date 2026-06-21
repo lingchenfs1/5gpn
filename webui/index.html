@@ -7,202 +7,253 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>5gpn 控制面板</title>
+<title>5gpn 控制台</title>
 <style>
   /* ---- theme: dark (default) ---- */
   :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
           --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623;
-          --input-bg:#11141a; --btn-bg:#222836; --btn-line:#2f3645; --shadow:none; }
-  /* light palette: applied on system-light (unless forced dark) and on forced light */
+          --input-bg:#11141a; --btn-bg:#222836; --btn-line:#2f3645; --shadow:none;
+          --sidebar-bg:#14171e; --nav-active:rgba(79,140,255,.16); }
   @media (prefers-color-scheme:light) {
     :root:not([data-theme="dark"]) {
       --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
       --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
       --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
-    }
+      --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
   }
   :root[data-theme="light"] {
     --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
     --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
     --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
-  }
+    --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
+
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; }
   body { margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
-         -webkit-tap-highlight-color:transparent; transition:background-color .2s ease, color .2s ease;
+         -webkit-tap-highlight-color:transparent; transition:background-color .2s, color .2s;
          font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
-  .wrap { max-width:760px; margin:0 auto; padding:16px;
-          padding-left:max(16px,env(safe-area-inset-left)); padding-right:max(16px,env(safe-area-inset-right));
-          padding-bottom:max(16px,env(safe-area-inset-bottom)); }
-  h1 { font-size:19px; margin:6px 0 16px; }
-  h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px;
-          box-shadow:var(--shadow); transition:background-color .2s ease, border-color .2s ease; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  .hide { display:none !important; }
+  .grow { flex:1; } .muted { color:var(--mut); } .small { font-size:12px; }
+  a { color:var(--acc); }
+
+  /* form controls */
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .row + .row { margin-top:8px; }
-  input, textarea, select, button { font-family:inherit; font-size:16px; /* >=16px stops iOS zoom-on-focus */
+  input, textarea, select, button { font-family:inherit; font-size:16px;
     color:var(--fg); background:var(--input-bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
   input, select { min-width:0; }
   input[type=text], input[type=password] { flex:1 1 200px; }
   select { min-height:44px; }
   textarea { width:100%; min-height:130px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; }
-  button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:44px; padding:10px 16px;
-    touch-action:manipulation; transition:transform .05s ease, background-color .2s ease, border-color .2s ease; }
+  button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:42px; padding:9px 14px;
+    touch-action:manipulation; transition:transform .05s, background-color .2s, border-color .2s; }
   button:active { transform:scale(.97); }
   @media (hover:hover) { button:hover { border-color:var(--acc); } }
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
   button.danger { border-color:var(--bad); color:var(--bad); }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; }
+
+  /* ---- login screen ---- */
+  .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .logincard { width:100%; max-width:380px; background:var(--card); border:1px solid var(--line);
+    border-radius:16px; padding:22px; box-shadow:var(--shadow); }
+  .logincard h1 { font-size:20px; margin:0 0 4px; }
+  .logincard .sub { color:var(--mut); font-size:13px; margin-bottom:16px; }
+
+  /* ---- app layout (UniFi-style) ---- */
+  .layout { display:flex; min-height:100vh; }
+  .sidebar { width:214px; flex:0 0 214px; background:var(--sidebar-bg); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; position:sticky; top:0; height:100vh; z-index:30; }
+  .brand { padding:18px 18px 10px; font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .brand .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
+  .brand .dot.on { background:var(--ok); }
+  nav.menu { flex:1; padding:8px; overflow:auto; }
+  .navitem { display:flex; align-items:center; gap:11px; padding:11px 14px; border-radius:10px;
+    color:var(--mut); cursor:pointer; font-size:14px; user-select:none; }
+  .navitem .ic { font-size:17px; width:20px; text-align:center; }
+  @media (hover:hover){ .navitem:hover { background:var(--nav-active); color:var(--fg); } }
+  .navitem.active { background:var(--nav-active); color:var(--acc); font-weight:600; }
+  .sidefoot { padding:12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  .sidefoot .url { font-size:11px; color:var(--mut); word-break:break-all; }
+
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .topbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line);
+    background:var(--card); position:sticky; top:0; z-index:10; min-height:56px; }
+  .topbar .title { font-size:16px; font-weight:600; flex:1; }
+  .topbar button { min-height:38px; padding:7px 11px; }
+  #themeBtn { border-radius:999px; }
+  .hamb { display:none; }
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:25; }
+  .content { padding:18px; width:100%; max-width:1080px; }
+
+  /* dashboard tiles */
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); }
+  .tile .tlabel { color:var(--mut); font-size:12px; }
+  .tile .tval { font-size:23px; font-weight:700; margin:5px 0 8px; word-break:break-all; }
+  .tile .tsub { color:var(--mut); font-size:11px; margin-top:7px; }
+
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow); }
+
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; display:inline-block; }
   .pill.on { color:var(--ok); border-color:var(--ok); }
   .pill.off { color:var(--bad); border-color:var(--bad); }
-  .exit { display:flex; align-items:center; gap:8px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .pills { display:flex; flex-wrap:wrap; gap:6px; }
+
+  .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
   .exit:first-child { border-top:none; }
-  .exit .name { font-weight:600; }
-  .exit .meta { color:var(--mut); font-size:12px; word-break:break-all; }
-  .grow { flex:1; }
-  .muted { color:var(--mut); }
-  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  .exit .name { font-weight:600; } .exit .meta { color:var(--mut); font-size:12px; word-break:break-all; }
+
   .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--line); }
   .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
-  #out { max-height:220px; overflow:auto; }
-  #rulelist { max-height:300px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  #out { max-height:360px; overflow:auto; }
+  #chart { width:100%; height:220px; display:block; }
+  #rulelist { max-height:340px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
   .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--line); }
-  .rrow:first-child { border-top:none; }
-  .rrow .mono { flex:1; word-break:break-all; }
-  .rrow .idx { color:var(--mut); min-width:30px; }
-  .rrow button { min-height:34px; padding:5px 10px; }
-  details > summary { cursor:pointer; list-style:revert; }
-  #chart { width:100%; height:200px; display:block; }
-  #conn { word-break:break-all; }
-  .res { margin-top:12px; }
-  .res .lab { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; gap:8px; }
-  .res .lab .sub { color:var(--mut); text-align:right; }
-  .small { font-size:12px; }
-  .hide { display:none; }
-  a { color:var(--acc); }
-  .head { display:flex; align-items:center; gap:8px; margin:6px 0 16px; }
-  .head h1 { flex:1; margin:0; }
-  #themeBtn { min-height:38px; padding:7px 12px; border-radius:999px; }
+  .rrow:first-child { border-top:none; } .rrow .mono { flex:1; word-break:break-all; }
+  .rrow .idx { color:var(--mut); min-width:30px; } .rrow button { min-height:34px; padding:5px 10px; }
+  details > summary { cursor:pointer; }
 
-  /* ---- phones ---- */
-  @media (max-width:560px) {
-    .wrap { padding:12px; padding-bottom:max(20px,env(safe-area-inset-bottom)); }
-    .card { padding:12px; margin-bottom:12px; }
-    h1 { font-size:18px; }
-    #chart { height:180px; }
-    /* full-width inputs and tap-friendly buttons that share a row */
+  /* ---- mobile drawer ---- */
+  @media (max-width:860px) {
+    .sidebar { position:fixed; left:0; top:0; bottom:0; height:100%; transform:translateX(-100%); transition:transform .2s ease; }
+    .sidebar.open { transform:none; box-shadow:0 0 40px rgba(0,0,0,.4); }
+    .hamb { display:inline-flex; }
+    .content { padding:14px; padding-bottom:max(18px,env(safe-area-inset-bottom)); }
+    .topbar { padding-left:max(12px,env(safe-area-inset-left)); }
     input[type=text], input[type=password] { flex:1 1 100%; }
     .card .row > button { flex:1 1 auto; }
-    .card > .row:first-child > button { flex:0 0 auto; }   /* keep header refresh small */
-    .exit { gap:6px 8px; }
-    .exit .name { order:1; flex:1 1 100%; }
-    .exit .meta { order:2; flex:1 1 100%; }
-    .exit button { order:3; flex:1 1 calc(50% - 4px); }
-    .exit .pill { order:3; margin-left:auto; }
+    .card > .row:first-child > button, .topbar button { flex:0 0 auto; }
+    .exit .name { order:1; flex:1 1 100%; } .exit .meta { order:2; flex:1 1 100%; }
+    .exit button { order:3; flex:1 1 calc(50% - 4px); } .exit .pill { order:3; margin-left:auto; }
     .exit select { order:3; flex:1 1 100%; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="head">
-    <h1>🛰️ 5gpn 控制面板</h1>
-    <button id="themeBtn" onclick="cycleTheme()" title="切换主题">🌓 跟随</button>
-  </div>
 
-  <div class="card">
-    <h2>连接</h2>
-    <div class="row">
-      <input id="url" type="text" placeholder="https://你的域名:8443" autocomplete="off">
-    </div>
-    <div class="row">
-      <input id="token" type="password" placeholder="API 令牌 (API_TOKEN)" autocomplete="off">
-      <button class="primary" onclick="connect()">连接</button>
+<!-- ============ login ============ -->
+<div id="login" class="login">
+  <div class="logincard">
+    <h1>🛰️ 5gpn 控制台</h1>
+    <div class="sub">连接到你的网关 API</div>
+    <div class="row"><input id="url" type="text" placeholder="https://你的域名:8443" autocomplete="off"></div>
+    <div class="row" style="margin-top:8px"><input id="token" type="password" placeholder="API 令牌 (API_TOKEN)" autocomplete="off"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary grow" onclick="connect()">连接</button>
       <button onclick="clearCreds()">清除</button>
+      <button id="themeBtn2" onclick="cycleTheme()" title="切换主题">🌓</button>
     </div>
-    <div class="row small muted" id="conn">未连接</div>
+    <div class="row small muted" id="conn" style="margin-top:10px">未连接</div>
   </div>
+</div>
 
-  <div id="app" class="hide">
-    <div class="card">
-      <div class="row"><h2 class="grow">状态</h2>
-        <button onclick="loadStatus()">🔄 刷新</button></div>
-      <div id="status" class="mono muted">…</div>
+<!-- ============ app ============ -->
+<div id="app" class="layout hide">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="dot" id="brandDot"></span> 5gpn</div>
+    <nav class="menu">
+      <div class="navitem active" data-sec="dash"    onclick="showSection('dash')"><span class="ic">📊</span> 概览</div>
+      <div class="navitem"        data-sec="exits"   onclick="showSection('exits')"><span class="ic">🌐</span> 出口</div>
+      <div class="navitem"        data-sec="routing" onclick="showSection('routing')"><span class="ic">🧭</span> 智能分流</div>
+      <div class="navitem"        data-sec="console" onclick="showSection('console')"><span class="ic">🖥️</span> 控制台</div>
+    </nav>
+    <div class="sidefoot">
+      <button id="themeBtn" onclick="cycleTheme()" title="切换主题">🌓 跟随</button>
+      <div class="url" id="sideUrl"></div>
     </div>
+  </aside>
 
-    <div class="card">
-      <div class="row"><h2 class="grow">24 小时流量趋势</h2>
-        <button onclick="loadTraffic()">🔄 刷新</button></div>
-      <canvas id="chart"></canvas>
-      <div id="legend" class="row small" style="margin-top:8px"></div>
-      <div id="traffic_note" class="small muted" style="margin-top:6px"></div>
-    </div>
+  <div class="main">
+    <header class="topbar">
+      <button class="hamb" onclick="toggleSidebar()">☰</button>
+      <div class="title" id="secTitle">概览</div>
+      <span class="pill on" id="connPill">●</span>
+      <button onclick="refreshAll()" title="刷新">🔄</button>
+    </header>
 
-    <div class="card">
-      <div class="row"><h2 class="grow">出口</h2>
-        <button onclick="checkExits()">🩺 检查连通性</button></div>
-      <div id="exits"></div>
-    </div>
+    <div class="content">
+      <!-- 概览 -->
+      <section data-sec="dash">
+        <div class="tiles" id="tiles"></div>
+        <div class="card">
+          <div class="row"><h2 class="grow">24 小时流量趋势</h2><button onclick="loadTraffic()">🔄</button></div>
+          <canvas id="chart"></canvas>
+          <div id="legend" class="pills small" style="margin-top:8px"></div>
+          <div id="traffic_note" class="small muted" style="margin-top:6px"></div>
+        </div>
+        <div class="card"><h2>服务</h2><div id="services" class="pills"></div></div>
+      </section>
 
-    <div class="card">
-      <h2>添加出口</h2>
-      <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
-      <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
+      <!-- 出口 -->
+      <section data-sec="exits" hidden>
+        <div class="card">
+          <div class="row"><h2 class="grow">出口</h2><button onclick="checkExits()">🩺 检查连通性</button></div>
+          <div id="exits"></div>
+        </div>
+        <div class="card">
+          <h2>添加出口</h2>
+          <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
+          <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
 或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]
 密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea></div>
-      <div class="row"><button class="primary" onclick="addExit()">➕ 添加</button></div>
-    </div>
+          <div class="row"><button class="primary" onclick="addExit()">➕ 添加</button></div>
+        </div>
+      </section>
 
-    <div class="card">
-      <h2>分类 → 出口映射</h2>
-      <div id="policy"></div>
-    </div>
+      <!-- 智能分流 -->
+      <section data-sec="routing" hidden>
+        <div class="card"><h2>分类 → 出口映射</h2><div id="policy"></div></div>
+        <div class="card">
+          <div class="row"><h2 class="grow">分流规则</h2>
+            <span class="muted small" id="rules_meta"></span>
+            <button onclick="loadRules()">🔄 读取</button>
+            <button onclick="updateRules()">⟳ 更新规则集</button></div>
+          <div class="row" style="margin-top:6px">
+            <select id="r_type">
+              <option>DOMAIN-SUFFIX</option><option>DOMAIN</option><option>DOMAIN-KEYWORD</option>
+              <option>IP-CIDR</option><option>RULE-SET</option><option>GEOSITE</option>
+              <option>GEOIP</option><option>FINAL</option>
+            </select>
+            <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
+          </div>
+          <div class="row">
+            <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 分类(如 AI)" list="tgtlist">
+            <datalist id="tgtlist"></datalist>
+            <button class="primary" onclick="addRule()">➕ 添加一条</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
+            <span class="muted small" id="r_count"></span>
+          </div>
+          <div id="rulelist"></div>
+          <details style="margin-top:10px">
+            <summary class="muted small">高级：直接编辑整份规则文本</summary>
+            <div class="row" style="margin-top:8px"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
+            <div class="row"><button class="primary" onclick="saveRules()">💾 保存整份并应用</button></div>
+          </details>
+        </div>
+      </section>
 
-    <div class="card">
-      <div class="row"><h2 class="grow">分流规则</h2>
-        <span class="muted small" id="rules_meta"></span>
-        <button onclick="loadRules()">🔄 读取</button>
-        <button onclick="updateRules()">⟳ 更新规则集</button></div>
-
-      <div class="row" style="margin-top:6px">
-        <select id="r_type">
-          <option>DOMAIN-SUFFIX</option><option>DOMAIN</option><option>DOMAIN-KEYWORD</option>
-          <option>IP-CIDR</option><option>RULE-SET</option><option>GEOSITE</option>
-          <option>GEOIP</option><option>FINAL</option>
-        </select>
-        <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
-      </div>
-      <div class="row">
-        <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 分类(如 AI)" list="tgtlist">
-        <datalist id="tgtlist"></datalist>
-        <button class="primary" onclick="addRule()">➕ 添加一条</button>
-      </div>
-
-      <div class="row" style="margin-top:8px">
-        <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
-        <span class="muted small" id="r_count"></span>
-      </div>
-      <div id="rulelist"></div>
-
-      <details style="margin-top:10px">
-        <summary class="muted small">高级：直接编辑整份规则文本</summary>
-        <div class="row" style="margin-top:8px"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
-        <div class="row"><button class="primary" onclick="saveRules()">💾 保存整份并应用</button></div>
-      </details>
-    </div>
-
-    <div class="card">
-      <div class="row"><h2 class="grow">输出</h2><button onclick="document.getElementById('out').textContent=''">清空</button></div>
-      <div id="out" class="mono"></div>
+      <!-- 控制台 -->
+      <section data-sec="console" hidden>
+        <div class="card">
+          <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
+          <div id="out" class="mono"></div>
+        </div>
+      </section>
     </div>
   </div>
 </div>
+<div id="scrim" class="scrim hide" onclick="closeSidebar()"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
-let RULES = [], lastTraffic = null;   // declared before any function that may run at init (theme)
+let RULES = [], lastTraffic = null;
+const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
 
 /* ---- theme (auto / light / dark) ---- */
 const THEMES = ["auto","light","dark"], THEME_ICON = {auto:"🌓 跟随", light:"☀️ 白天", dark:"🌙 夜间"};
@@ -212,7 +263,7 @@ function applyTheme(t){
   else document.documentElement.setAttribute("data-theme", t);
   const b=$("themeBtn"); if(b) b.textContent = THEME_ICON[t]||THEME_ICON.auto;
   const m=document.querySelector('meta[name=theme-color]'); if(m) m.setAttribute("content", cssVar("--bg"));
-  if(typeof lastTraffic!=="undefined" && lastTraffic) drawChart(lastTraffic);
+  if(lastTraffic) drawChart(lastTraffic);
 }
 function cycleTheme(){
   const cur=localStorage.getItem("pgw_theme")||"auto";
@@ -224,13 +275,25 @@ if(window.matchMedia) window.matchMedia("(prefers-color-scheme:light)").addEvent
   if((localStorage.getItem("pgw_theme")||"auto")==="auto") applyTheme("auto");
 });
 
-function log(msg, cls) {
-  const o = $("out");
-  const t = new Date().toLocaleTimeString();
-  o.textContent = "[" + t + "] " + msg + "\n" + o.textContent;
+/* ---- nav / drawer ---- */
+function showSection(sec){
+  sec = sec || "dash";
+  document.querySelectorAll('section[data-sec]').forEach(s=>{ s.hidden = (s.dataset.sec!==sec); });
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('active', n.dataset.sec===sec));
+  $("secTitle").textContent = SEC_TITLE[sec]||"";
+  localStorage.setItem("pgw_sec", sec);
+  closeSidebar();
+  if(sec==="dash") loadTraffic();
+  if(sec==="routing") loadRules();
 }
+function toggleSidebar(){ const o=$("sidebar").classList.toggle("open"); $("scrim").classList.toggle("hide", !o); }
+function closeSidebar(){ $("sidebar").classList.remove("open"); $("scrim").classList.add("hide"); }
+function refreshAll(){ loadStatus(); loadTraffic(); loadRules(); }
+
+function log(msg){ const o=$("out"); const t=new Date().toLocaleTimeString(); o.textContent="["+t+"] "+msg+"\n"+o.textContent; }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
-  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("conn").textContent="已清除"; }
+  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
 
 async function api(path, method, body) {
   const opt = { method: method||"GET", headers: { "Authorization": "Bearer "+TOKEN } };
@@ -248,12 +311,12 @@ async function connect() {
   $("conn").textContent = "连接中…";
   try {
     await fetch(BASE+"/api/health").then(r=>r.json());
-    await api("/api/status");                      // verifies token
-    localStorage.setItem("pgw_url", BASE);
-    localStorage.setItem("pgw_token", TOKEN);
-    $("app").classList.remove("hide");
-    $("conn").textContent = "已连接 ✅ " + BASE;
-    loadStatus(); loadTraffic(); loadRules();
+    await api("/api/status");
+    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN);
+    $("login").classList.add("hide"); $("app").classList.remove("hide");
+    $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
+    loadStatus(); loadRules();
+    showSection(localStorage.getItem("pgw_sec")||"dash");
   } catch(e) {
     $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
   }
@@ -262,10 +325,11 @@ async function connect() {
 function gb(mb){ return ((mb||0)/1024).toFixed(1); }
 function fmtUptime(s){ s=s||0; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
   return (d?d+"天":"")+(h?h+"小时":"")+((d||h)?"":m+"分")||"0分"; }
-function resBar(label, pct, sub){ pct=Math.max(0,Math.min(100,Math.round(pct||0)));
-  return `<div class="res"><div class="lab"><span>${label}</span><span class="sub">${sub||""}</span></div>`+
-    `<div class="bar"><i style="width:${pct}%"></i></div></div>`; }
-
+function tile(label,val,pct,sub){
+  return `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${val}</div>`+
+    (pct!=null?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,Math.round(pct)))}%"></i></div>`:``)+
+    (sub?`<div class="tsub">${sub}</div>`:``)+`</div>`;
+}
 async function loadStatus() {
   try {
     const s = await api("/api/status");
@@ -274,18 +338,18 @@ async function loadStatus() {
     const diskPct = r.disk_total_mb ? r.disk_used_mb/r.disk_total_mb*100 : 0;
     const cpu = r.cpu_percent||0;
     const load = (r.load||[]).map(x=>x.toFixed(2)).join(" ");
-    const sv = Object.entries(s.services||{}).map(([k,v])=>
-      `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join(" ");
-    $("status").innerHTML =
-      `<div class="row"><b style="color:var(--fg)">当前出口：${s.current}</b>`+
-      `<span class="grow"></span><span class="muted small">运行 ${fmtUptime(r.uptime_sec)}</span></div>`+
-      resBar(`CPU ${cpu}%`, cpu, `${r.cpu_cores||1} 核 · 负载 ${load}`)+
-      resBar(`内存 ${r.used_mb||0} / ${r.total_mb||0} MB`, memPct, `swap ${r.swap_used_mb||0}/${r.swap_total_mb||0} MB`)+
-      resBar(`硬盘 ${gb(r.disk_used_mb)} / ${gb(r.disk_total_mb)} GB`, diskPct, Math.round(diskPct)+"%")+
-      `<div class="row" style="margin-top:12px">${sv}</div>`;
+    $("tiles").innerHTML =
+      tile("当前出口", esc(s.current), null, "") +
+      tile("CPU", cpu+"%", cpu, (r.cpu_cores||1)+" 核 · 负载 "+(load||"-")) +
+      tile("内存", (r.used_mb||0)+" MB", memPct, "共 "+(r.total_mb||0)+" · swap "+(r.swap_used_mb||0)) +
+      tile("硬盘", gb(r.disk_used_mb)+" GB", diskPct, "共 "+gb(r.disk_total_mb)+" GB") +
+      tile("运行时间", fmtUptime(r.uptime_sec), null, "");
+    $("services").innerHTML = Object.entries(s.services||{}).map(([k,v])=>
+      `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join("");
+    $("connPill").className = "pill on"; $("connPill").textContent = "● 在线";
     renderExits(s.exits, s.current);
     renderPolicy(s.policy, s.exits);
-  } catch(e){ log("状态获取失败："+e.message); }
+  } catch(e){ $("connPill").className="pill off"; $("connPill").textContent="● 离线"; log("状态获取失败："+e.message); }
 }
 
 const COLORS = ["#4f8cff","#2ecc71","#f5a623","#ff5c5c","#a06cff","#19c3c3","#ff8c42"];
@@ -296,8 +360,8 @@ async function loadTraffic(){ try{ drawChart(await api("/api/traffic")); }catch(
 window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); });
 function drawChart(d){
   lastTraffic=d;
-  const cv=$("chart"), dpr=window.devicePixelRatio||1;
-  const W=cv.clientWidth||600, H=200;
+  const cv=$("chart"); if(!cv) return; const dpr=window.devicePixelRatio||1;
+  const W=cv.clientWidth||600, H=220;
   cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
   g.clearRect(0,0,W,H);
   const interval=d.interval_sec||300, now=d.now||Math.floor(Date.now()/1000), tStart=now-86400;
@@ -314,10 +378,10 @@ function drawChart(d){
   const xOf=t=>x0+(x1-x0)*Math.max(0,Math.min(1,(t-tStart)/86400));
   const yOf=r=>y1-(y1-y0)*Math.min(r,maxR)/maxR;
   series.forEach((s,i)=>{ const pa=lines[s]; if(!pa.length)return; g.strokeStyle=COLORS[i%COLORS.length];
-    g.lineWidth=1.6; g.beginPath(); pa.forEach((pt,j)=>{ const x=xOf(pt[0]),y=yOf(pt[1]);
+    g.lineWidth=1.8; g.beginPath(); pa.forEach((pt,j)=>{ const x=xOf(pt[0]),y=yOf(pt[1]);
     j?g.lineTo(x,y):g.moveTo(x,y); }); g.stroke(); });
   $("legend").innerHTML = series.map((s,i)=>`<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">`+
-    `${s==="server"?"本机":s} ${fmtBytes(totals[s])}</span>`).join(" ") || `<span class="muted small">暂无数据</span>`;
+    `${s==="server"?"本机":s} ${fmtBytes(totals[s])}</span>`).join("") || `<span class="muted small">暂无数据</span>`;
   $("traffic_note").textContent = pts.length<2 ?
     ("数据积累中（每 "+(interval/60)+" 分钟采样一次，需若干样本后成型）…") : "";
 }
@@ -329,24 +393,23 @@ function renderExits(exits, cur) {
     `<div class="exit"><span class="name">smart</span><span class="meta grow">智能分流（按规则）</span>`+
     (cur==="smart"?`<span class="pill on">使用中</span>`:`<button onclick="setExit('smart')">切换</button>`)+`</div>`];
   (exits||[]).forEach(e=>{
-    rows.push(`<div class="exit"><span class="name">${e.name}</span>`+
-      `<span class="meta grow">${e.type} ${e.server||""}</span>`+
-      (e.active?`<span class="pill on">使用中</span>`:`<button onclick="setExit('${e.name}')">切换</button>`)+
-      `<button class="danger" onclick="delExit('${e.name}')">删</button></div>`);
+    rows.push(`<div class="exit"><span class="name">${esc(e.name)}</span>`+
+      `<span class="meta grow">${esc(e.type)} ${esc(e.server||"")}</span>`+
+      (e.active?`<span class="pill on">使用中</span>`:`<button onclick="setExit('${esc(e.name)}')">切换</button>`)+
+      `<button class="danger" onclick="delExit('${esc(e.name)}')">删</button></div>`);
   });
   box.innerHTML = rows.join("");
 }
-
 function renderPolicy(policy, exits) {
   const box = $("policy");
   const targets = ["direct","block","local","smart"].concat((exits||[]).map(e=>e.name));
   const ents = Object.entries(policy||{});
   if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无分类，先导入/设置分流规则）</div>`; return; }
   box.innerHTML = ents.map(([cat,tgt])=>{
-    const opts = targets.map(t=>`<option ${t===tgt?'selected':''}>${t}</option>`).join("");
-    return `<div class="exit"><span class="name grow">${cat}</span>`+
-      `<select id="pol_${cat}">${opts}</select>`+
-      `<button onclick="setPolicy('${cat}')">设置</button></div>`;
+    const opts = targets.map(t=>`<option ${t===tgt?'selected':''}>${esc(t)}</option>`).join("");
+    return `<div class="exit"><span class="name grow">${esc(cat)}</span>`+
+      `<select id="pol_${esc(cat)}">${opts}</select>`+
+      `<button onclick="setPolicy('${esc(cat)}')">设置</button></div>`;
   }).join("");
 }
 
@@ -363,9 +426,8 @@ async function addExit(){
 async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await api("/api/exits/check","POST",{});
   log("🩺 出口连通性：\n"+(r.exits||[]).map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n")); }catch(e){ log("❌ "+e.message);} }
 async function setPolicy(cat){ const tgt=$("pol_"+cat).value; log("⏳ "+cat+" → "+tgt+" …");
-  try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
+  try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
 
-function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
   $("rules_meta").textContent="共 "+(r.count||0)+" 条";
   const tgts=[...new Set(RULES.map(e=>e.target).filter(Boolean).concat(["direct","block"]))].sort();
