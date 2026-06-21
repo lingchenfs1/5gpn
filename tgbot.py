@@ -252,6 +252,44 @@ def _read_file(path):
         return ""
 
 
+def _parse_env(path):
+    d = {}
+    for line in _read_file(path).splitlines():
+        line = line.strip()
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            d[k.strip()] = v.strip()
+    return d
+
+
+API_ENV = "/opt/proxy-gateway/etc/api.env"
+
+
+def op_api_info():
+    env = _parse_env(API_ENV)
+    if not env.get("API_TOKEN"):
+        return ("🔑 <b>HTTP 控制 API</b>\n\n未启用。在服务器运行 "
+                "<code>proxy-gateway-ctl --setup-api</code> 开启后，这里会显示地址和令牌。")
+    domain = _read_file("/etc/dnsdist/.domain") or "<你的域名>"
+    port = env.get("API_PORT", "8443")
+    token = env.get("API_TOKEN", "")
+    base = "https://%s:%s" % (domain, port)
+    active = _is_active("proxy-gateway-api")
+    return "\n".join([
+        "🔑 <b>HTTP 控制 API</b>  %s" % ("🟢 运行中" if active else "🔴 未运行"),
+        "在网页控制面板填入下面两项即可（点一下即可复制）：",
+        "",
+        "🌐 API 地址",
+        "<code>%s</code>" % html.escape(base),
+        "",
+        "🔐 令牌 (API_TOKEN)",
+        "<code>%s</code>" % html.escape(token),
+        "",
+        "🩺 健康检查：<code>%s/api/health</code>" % html.escape(base),
+        "⚠️ 令牌等于完全控制权，请勿外发。",
+    ])
+
+
 def _is_active(unit):
     try:
         p = subprocess.run(["systemctl", "is-active", unit],
@@ -655,6 +693,7 @@ def main_menu():
          {"text": "♻️ 重启服务", "callback_data": "menu:restart"}],
         [{"text": "📜 日志", "callback_data": "menu:logs"},
          {"text": "📱 iOS 二维码", "callback_data": "act:ios"}],
+        [{"text": "🔑 API / 网页面板", "callback_data": "act:api"}],
     ]
 
 
@@ -762,6 +801,8 @@ def handle_message(msg):
             send(chat_id, "选择要切换到的出口：", exits_menu())
         elif text.startswith("/rules"):
             send(chat_id, "🧭 <b>智能分流</b>：按域名分流到不同出口 / 直连 / 拒绝。", rules_menu())
+        elif text.startswith("/api"):
+            send(chat_id, op_api_info(), back_kb("menu:main"))
         else:
             send(chat_id, "未知命令。发送 /menu 打开操作面板。")
         return
@@ -879,6 +920,8 @@ def handle_callback(cb):
         edit(cb, op_show_rules(), back_kb("menu:rules"))
     elif data == "act:status":
         edit(cb, op_status(), back_kb("menu:main"))
+    elif data == "act:api":
+        edit(cb, op_api_info(), back_kb("menu:main"))
     elif data.startswith("logs:"):
         svc = data[len("logs:"):]
         edit(cb, "📜 正在取 <b>%s</b> 日志…" % html.escape(svc))
@@ -951,6 +994,7 @@ BOT_COMMANDS = [
     ("status", "查看运行状态"),
     ("exits", "出口管理（切换/添加/删除）"),
     ("rules", "智能分流规则"),
+    ("api", "API 地址与令牌（网页面板）"),
     ("cancel", "取消当前操作"),
     ("id", "获取我的 Telegram ID"),
     ("help", "帮助说明"),
