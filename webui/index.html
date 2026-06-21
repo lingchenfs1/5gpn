@@ -205,7 +205,15 @@
 
       <!-- 智能分流 -->
       <section data-sec="routing" hidden>
-        <div class="card"><h2>分类 → 出口映射</h2><div id="policy"></div></div>
+        <div class="card">
+          <h2>规则组（分类 → 出口）</h2>
+          <div id="policy"></div>
+          <div class="row" style="margin-top:12px">
+            <input id="g_name" type="text" placeholder="新规则组名，如 Stream / Game">
+            <select id="g_tgt"></select>
+            <button class="primary" onclick="createGroup()">＋ 新建规则组</button>
+          </div>
+        </div>
         <div class="card">
           <div class="row"><h2 class="grow">分流规则</h2>
             <span class="muted small" id="rules_meta"></span>
@@ -220,9 +228,10 @@
             <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
           </div>
           <div class="row">
-            <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 分类(如 AI)" list="tgtlist">
+            <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 规则组(如 AI)" list="tgtlist">
             <datalist id="tgtlist"></datalist>
-            <button class="primary" onclick="addRule()">➕ 添加一条</button>
+            <button class="primary" id="addRuleBtn" onclick="addRule()">➕ 添加一条</button>
+            <button id="cancelEditBtn" class="hide" onclick="cancelEdit()">取消</button>
           </div>
           <div class="row" style="margin-top:8px">
             <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
@@ -252,7 +261,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
-let RULES = [], lastTraffic = null;
+let RULES = [], lastTraffic = null, EDIT_IDX = null;
 const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
 
 /* ---- theme (auto / light / dark) ---- */
@@ -296,13 +305,38 @@ function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeIt
   $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
 
 async function api(path, method, body) {
+  const post = method && method !== "GET";
   const opt = { method: method||"GET", headers: { "Authorization": "Bearer "+TOKEN } };
   if (body !== undefined) { opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
-  const r = await fetch(BASE+path, opt);
-  let j; try { j = await r.json(); } catch(e) { throw new Error("HTTP "+r.status); }
+  let r;
+  try { r = await fetch(BASE+path, opt); }
+  catch(e) { throw new Error(post ? "NETDROP" : e.message); }   // connection reset (e.g. router rebuild)
+  const txt = await r.text().catch(()=> "");
+  if (!txt) { throw new Error(post ? "NETDROP" : ("HTTP "+r.status)); }
+  let j; try { j = JSON.parse(txt); } catch(e) { throw new Error(post ? "NETDROP" : ("HTTP "+r.status)); }
   if (!r.ok && j && j.error) throw new Error(j.error);
   return j;
 }
+
+// Mutating call: a dropped response (the router rebuild can briefly reset the
+// connection on this small box) is NOT treated as failure — we reload and show
+// the real state. Genuine validation errors return fast JSON and still surface.
+async function mutate(path, body, label, reload) {
+  log("⏳ " + label + "…");
+  try {
+    const r = await api(path, "POST", body);
+    log((r.ok ? "✅ " : "❌ ") + label + (r.output ? "\n"+r.output : ""));
+    if (reload) reload();
+    return r.ok;
+  } catch(e) {
+    if (e.message === "NETDROP") {
+      log("⏳ " + label + "：服务器重建路由，连接短暂中断；已自动刷新，请核对结果。");
+      if (reload) reload();
+    } else { log("❌ " + label + "：" + e.message); }
+    return false;
+  }
+}
+function refreshState(){ loadStatus(); loadRules(); }
 
 async function connect() {
   BASE = $("url").value.trim().replace(/\/+$/,"");
@@ -402,31 +436,46 @@ function renderExits(exits, cur) {
 }
 function renderPolicy(policy, exits) {
   const box = $("policy");
-  const targets = ["direct","block","local","smart"].concat((exits||[]).map(e=>e.name));
+  const targets = ["direct","block"].concat((exits||[]).map(e=>e.name));   // valid policy targets
+  if($("g_tgt")) $("g_tgt").innerHTML = targets.map(t=>`<option>${esc(t)}</option>`).join("");
   const ents = Object.entries(policy||{});
-  if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无分类，先导入/设置分流规则）</div>`; return; }
+  if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无规则组，下面新建一个，或在“分流规则”里添加规则后自动出现）</div>`; return; }
   box.innerHTML = ents.map(([cat,tgt])=>{
     const opts = targets.map(t=>`<option ${t===tgt?'selected':''}>${esc(t)}</option>`).join("");
     return `<div class="exit"><span class="name grow">${esc(cat)}</span>`+
       `<select id="pol_${esc(cat)}">${opts}</select>`+
-      `<button onclick="setPolicy('${esc(cat)}')">设置</button></div>`;
+      `<button onclick="setPolicy('${esc(cat)}')">设置</button>`+
+      `<button onclick="renameGroup('${esc(cat)}')">改名</button>`+
+      `<button class="danger" onclick="delGroup('${esc(cat)}')">删</button></div>`;
   }).join("");
 }
+async function createGroup(){
+  const name=$("g_name").value.trim(), tgt=$("g_tgt").value;
+  if(!name){ log("请填规则组名"); return; }
+  const ok=await mutate("/api/policy",{category:name,target:tgt},"新建规则组 "+name+" → "+tgt, refreshState);
+  if(ok) $("g_name").value="";
+}
+function renameGroup(cat){
+  const n=(prompt("把规则组「"+cat+"」改名为：", cat)||"").trim();
+  if(!n||n===cat) return;
+  mutate("/api/policy/rename",{old:cat,new:n},"改名 "+cat+" → "+n, refreshState);
+}
+function delGroup(cat){
+  if(!confirm("删除规则组「"+cat+"」？引用它的规则会回退为直连，可稍后改它们的目标。"))return;
+  mutate("/api/policy/del",{category:cat},"删除规则组 "+cat, refreshState);
+}
 
-async function setExit(name){ try{ const r=await api("/api/exits/set","POST",{name}); log((r.ok?"✅ ":"❌ ")+"切换 "+name+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
-async function delExit(name){ if(!confirm("删除出口 "+name+" ?"))return; try{ const r=await api("/api/exits/del","POST",{name}); log((r.ok?"✅ ":"❌ ")+"删除 "+name+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+function setExit(name){ mutate("/api/exits/set",{name},"切换出口 "+name, loadStatus); }
+function delExit(name){ if(confirm("删除出口 "+name+" ?")) mutate("/api/exits/del",{name},"删除出口 "+name, loadStatus); }
 async function addExit(){
   const name=$("ex_name").value.trim(), config=$("ex_cfg").value;
   if(!name||!config.trim()){ log("请填写名字和配置"); return; }
-  log("⏳ 添加出口 "+name+" …");
-  try{ const r=await api("/api/exits/add","POST",{name,config});
-    log((r.ok?"✅ ":"❌ ")+"添加 "+name+"\n"+(r.output||""));
-    if(r.ok){ $("ex_name").value=""; $("ex_cfg").value=""; } loadStatus();
-  }catch(e){ log("❌ "+e.message);} }
+  const ok=await mutate("/api/exits/add",{name,config},"添加出口 "+name, loadStatus);
+  if(ok){ $("ex_name").value=""; $("ex_cfg").value=""; }
+}
 async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await api("/api/exits/check","POST",{});
-  log("🩺 出口连通性：\n"+(r.exits||[]).map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n")); }catch(e){ log("❌ "+e.message);} }
-async function setPolicy(cat){ const tgt=$("pol_"+cat).value; log("⏳ "+cat+" → "+tgt+" …");
-  try{ const r=await api("/api/policy","POST",{category:cat,target:tgt}); log((r.ok?"✅ ":"❌ ")+cat+" → "+tgt+"\n"+(r.output||"")); loadStatus(); }catch(e){ log("❌ "+e.message);} }
+  log("🩺 出口连通性：\n"+(r.exits||[]).map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n")); }catch(e){ log("❌ 检查连通性："+e.message);} }
+function setPolicy(cat){ const tgt=$("pol_"+cat).value; mutate("/api/policy",{category:cat,target:tgt}, cat+" → "+tgt, loadStatus); }
 
 async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
   $("rules_meta").textContent="共 "+(r.count||0)+" 条";
@@ -440,27 +489,45 @@ function renderRuleList(){
   $("r_count").textContent=q?(rows.length+"/"+RULES.length):(RULES.length+" 条");
   $("rulelist").innerHTML = rows.length? rows.map(e=>
     `<div class="rrow"><span class="idx">#${e.i}</span><span class="mono">${esc(e.raw)}</span>`+
+    `<button onclick="editRule(${e.i})">改</button>`+
     `<button class="danger" onclick="delRule(${e.i})">删</button></div>`).join("")
     : `<div class="rrow muted small">无匹配规则</div>`;
+}
+const RULE_TYPES = ["DOMAIN-SUFFIX","DOMAIN","DOMAIN-KEYWORD","IP-CIDR","RULE-SET","GEOSITE","GEOIP","FINAL"];
+function editRule(i){
+  const e = RULES.find(x=>x.i===i); if(!e) return;
+  EDIT_IDX = i;
+  $("r_type").value = RULE_TYPES.includes(e.type) ? e.type : "DOMAIN-SUFFIX";
+  $("r_val").value = e.value||"";
+  $("r_tgt").value = e.target||"";
+  $("addRuleBtn").textContent = "💾 保存修改 #"+i;
+  $("cancelEditBtn").classList.remove("hide");
+  $("r_val").focus();
+}
+function cancelEdit(){
+  EDIT_IDX = null;
+  $("r_val").value=""; $("r_tgt").value="";
+  $("addRuleBtn").textContent = "➕ 添加一条";
+  $("cancelEditBtn").classList.add("hide");
 }
 async function addRule(){
   const type=$("r_type").value, val=$("r_val").value.trim(), tgt=$("r_tgt").value.trim();
   if(!tgt){ log("请填目标"); return; }
   if(type!=="FINAL" && !val){ log("请填规则值"); return; }
   const rule = type==="FINAL" ? ("FINAL,"+tgt) : (type+","+val+","+tgt);
-  log("⏳ 添加规则："+rule);
-  try{ const r=await api("/api/rules/add","POST",{rule});
-    log((r.ok?"✅ ":"❌ ")+"添加规则\n"+(r.output||""));
-    if(r.ok){ $("r_val").value=""; loadRules(); }
-  }catch(e){ log("❌ "+e.message);} }
-async function delRule(i){ if(!confirm("删除规则 #"+i+" ?"))return; log("⏳ 删除规则 #"+i+"…");
-  try{ const r=await api("/api/rules/del","POST",{index:i});
-    log((r.ok?"✅ ":"❌ ")+"删除 #"+i+"\n"+(r.output||"")); if(r.ok) loadRules();
-  }catch(e){ log("❌ "+e.message);} }
-async function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
-  if(!confirm("保存并应用整份分流规则？"))return; log("⏳ 保存规则（可能需要拉取规则集）…");
-  try{ const r=await api("/api/rules","POST",{rules}); log((r.ok?"✅ ":"❌ ")+"保存规则\n"+(r.output||"")); loadRules(); loadStatus(); }catch(e){ log("❌ "+e.message);} }
-async function updateRules(){ log("⏳ 更新 GFWList/ChinaList…"); try{ const r=await api("/api/update-rules","POST",{}); log((r.ok?"✅ ":"❌ ")+"更新规则\n"+(r.output||"")); }catch(e){ log("❌ "+e.message);} }
+  if(EDIT_IDX!=null){
+    const i=EDIT_IDX;
+    const ok=await mutate("/api/rules/edit",{index:i,rule},"修改规则 #"+i+" → "+rule, loadRules);
+    if(ok) cancelEdit();
+    return;
+  }
+  const ok=await mutate("/api/rules/add",{rule},"添加规则 "+rule, loadRules);
+  if(ok) $("r_val").value="";
+}
+function delRule(i){ if(confirm("删除规则 #"+i+" ?")) mutate("/api/rules/del",{index:i},"删除规则 #"+i, loadRules); }
+function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
+  if(confirm("保存并应用整份分流规则？")) mutate("/api/rules",{rules},"保存整份规则", refreshState); }
+function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList", loadStatus); }
 
 // restore saved creds
 (function(){ const u=localStorage.getItem("pgw_url"), t=localStorage.getItem("pgw_token");

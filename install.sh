@@ -179,7 +179,9 @@ Options:
                  Convert a rule list into smart rules (categories),
                  seed the category->exit policy map, and rebuild the router.
   --set-policy <category> <exit|direct|block>
-                 Map a rule category to an egress target, then rebuild.
+                 Map a rule category (group) to an egress target, then rebuild.
+  --del-policy <category>      Remove a rule group from the policy map.
+  --rename-policy <old> <new>  Rename a rule group (updates rules + map).
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
@@ -1889,6 +1891,37 @@ show_policy() {
     fi
 }
 
+# Remove a category (rule group) from the policy map. Rules still targeting it
+# fall back to the router's default (direct) until re-mapped or edited.
+del_policy() {
+    local cat="${1:-}"
+    [[ -z "$cat" ]] && { err "Usage: $0 --del-policy <category>"; exit 1; }
+    [[ -f "${POLICY_MAP}" ]] || { err "No policy map yet."; exit 1; }
+    awk -F= -v c="$cat" '$1!=c' "${POLICY_MAP}" > "${POLICY_MAP}.tmp" && mv "${POLICY_MAP}.tmp" "${POLICY_MAP}"
+    ok "Removed rule group '$cat'"
+    regen_smart
+}
+
+# Rename a category (rule group): update the policy map key AND every rule whose
+# target is that category, then rebuild — all in one pass.
+rename_policy() {
+    local old="${1:-}" new="${2:-}"
+    [[ -z "$old" || -z "$new" ]] && { err "Usage: $0 --rename-policy <old> <new>"; exit 1; }
+    [[ "$new" =~ ^[A-Za-z0-9_-]+$ || "$new" =~ [^[:ascii:]] ]] || { err "Invalid new name"; exit 1; }
+    if [[ -f "${POLICY_MAP}" ]]; then
+        awk -F= -v o="$old" -v n="$new" 'BEGIN{OFS="="} $1==o{$1=n} {print}' "${POLICY_MAP}" > "${POLICY_MAP}.tmp" \
+            && mv "${POLICY_MAP}.tmp" "${POLICY_MAP}"
+    fi
+    if [[ -f "${RULES_FILE}" ]]; then
+        awk -v o="$old" -v n="$new" '
+            /^[[:space:]]*(#|;|$)/ { print; next }
+            { k=split($0,a,","); if(a[k]==o){ a[k]=n; line=a[1]; for(i=2;i<=k;i++) line=line","a[i]; print line } else print $0 }
+        ' "${RULES_FILE}" > "${RULES_FILE}.tmp" && mv "${RULES_FILE}.tmp" "${RULES_FILE}"
+    fi
+    ok "Renamed rule group '$old' -> '$new'"
+    regen_smart
+}
+
 show_rules() {
     if [[ -f "${RULES_FILE}" ]]; then
         cat "${RULES_FILE}"
@@ -2408,6 +2441,14 @@ case "${1:-}" in
     --set-policy)
         check_root
         set_policy "${2:-}" "${3:-}"
+        ;;
+    --del-policy)
+        check_root
+        del_policy "${2:-}"
+        ;;
+    --rename-policy)
+        check_root
+        rename_policy "${2:-}" "${3:-}"
         ;;
     --show-policy)
         show_policy

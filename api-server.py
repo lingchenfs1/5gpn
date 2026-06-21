@@ -428,6 +428,21 @@ class Handler(BaseHTTPRequestHandler):
             ok, out = ctl("--set-policy", cat, tgt, timeout=300)
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
 
+        if path == "/api/policy/del":
+            cat = str(b.get("category", "")).strip()
+            if not CAT_RE.match(cat):
+                return self._send(400, {"ok": False, "error": "invalid category"})
+            ok, out = ctl("--del-policy", cat, timeout=300)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/policy/rename":
+            old = str(b.get("old", "")).strip()
+            new = str(b.get("new", "")).strip()
+            if not CAT_RE.match(old) or not CAT_RE.match(new):
+                return self._send(400, {"ok": False, "error": "invalid name"})
+            ok, out = ctl("--rename-policy", old, new, timeout=400)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
         if path == "/api/rules":
             rules = b.get("rules", "")
             if not isinstance(rules, str) or not rules.strip():
@@ -461,6 +476,29 @@ class Handler(BaseHTTPRequestHandler):
             if not dropped:
                 return self._send(400, {"ok": False, "error": "index out of range"})
             ok, out = rules_set("\n".join(keep) + "\n")
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/rules/edit":
+            try:
+                idx = int(b.get("index"))
+            except (TypeError, ValueError):
+                return self._send(400, {"ok": False, "error": "invalid index"})
+            rule = str(b.get("rule", "")).strip()
+            if not rule or "\n" in rule or len(rule) > 2000:
+                return self._send(400, {"ok": False, "error": "invalid rule"})
+            out_lines, n, replaced = [], 0, False
+            for ln in read_file(RULES_FILE).splitlines():
+                s = ln.strip()
+                if s and s[0] not in "#;":
+                    n += 1
+                    if n == idx:
+                        out_lines.append(rule)
+                        replaced = True
+                        continue
+                out_lines.append(ln)
+            if not replaced:
+                return self._send(400, {"ok": False, "error": "index out of range"})
+            ok, out = rules_set("\n".join(out_lines) + "\n")
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
 
         if path == "/api/update-rules":

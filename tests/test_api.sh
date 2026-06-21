@@ -14,10 +14,14 @@ python3 -m py_compile "${here}/api-server.py" || fail "api-server.py must compil
 [[ "${api_body}" == *'load_cert_chain'* ]] || fail "API must serve TLS"
 [[ "${api_body}" == *'len(TOKEN) < 16'* ]] || fail "API must refuse a missing/short token"
 for ep in '/api/health' '/api/status' '/api/exits/set' '/api/exits/add' '/api/exits/del' \
-          '/api/exits/check' '/api/policy' '/api/rules' '/api/rules/add' '/api/rules/del' \
+          '/api/exits/check' '/api/policy' '/api/policy/del' '/api/policy/rename' \
+          '/api/rules' '/api/rules/add' '/api/rules/del' '/api/rules/edit' \
           '/api/update-rules' '/api/traffic'; do
     [[ "${api_body}" == *"${ep}"* ]] || fail "API missing endpoint: ${ep}"
 done
+# rule-group (category) management in the ctl backend
+[[ "${install_body}" == *'del_policy()'* && "${install_body}" == *'rename_policy()'* ]] || fail "ctl must support del/rename rule groups"
+[[ "${install_body}" == *'--del-policy)'* && "${install_body}" == *'--rename-policy)'* ]] || fail "ctl must dispatch del/rename-policy"
 [[ "${api_body}" == *'def parse_rules'* ]] || fail "API must parse rules into structured entries"
 # resources (cpu/mem/disk/uptime/load) + 24h traffic collector
 for fn in 'def resources' 'cpu_percent' 'statvfs' 'uptime_sec' 'def read_net_dev' 'def traffic_tick' 'def traffic_loop'; do
@@ -54,5 +58,8 @@ web="$(cat "${here}/webui/index.html")"
 [[ "${web}" == *'class="sidebar"'* && "${web}" == *'showSection'* && "${web}" == *'data-sec="dash"'* ]] || fail "web panel must use the sidebar/section layout"
 # panel: detailed per-rule control (add one / delete one / list)
 [[ "${web}" == *'/api/rules/add'* && "${web}" == *'/api/rules/del'* && "${web}" == *'renderRuleList'* ]] || fail "web panel must support per-rule add/delete"
+# panel: edit a rule + create/rename/delete rule groups
+[[ "${web}" == *'editRule'* && "${web}" == *'/api/rules/edit'* ]] || fail "web panel must support editing a rule"
+[[ "${web}" == *'createGroup'* && "${web}" == *'renameGroup'* && "${web}" == *'delGroup'* ]] || fail "web panel must manage rule groups"
 
 echo "api control surface OK"
