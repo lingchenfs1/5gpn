@@ -670,7 +670,7 @@ def restore_backup(b64):
         return False, "备份内容无效（无可识别的配置文件）"
     tf.extractall("/", members=members)
     ctl("--set-rules", inp=read_file(RULES_FILE), timeout=400)   # rebuild router from restored rules
-    run(["systemctl", "reload", "dnsdist"], timeout=20)
+    run(["systemctl", "restart", "dnsdist"], timeout=30)         # dnsdist can't hot-reload
     run(["/usr/local/bin/proxy-gateway-apply-exit.sh"], timeout=30)
     return True, "已恢复 %d 个文件，并重建路由。如需重建劫持名单可再执行『更新规则集』。" % len(members)
 

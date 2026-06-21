@@ -16,7 +16,7 @@ chown -R _dnsdist:_dnsdist /etc/dnsdist/certs/
 chmod 640 /etc/dnsdist/certs/*.pem
 
 if systemctl is-active --quiet dnsdist; then
-    systemctl reload dnsdist 2>/dev/null || systemctl restart dnsdist
+    systemctl restart dnsdist   # dnsdist can't hot-reload (SIGHUP exits it); restart applies the new cert
 fi
 
 # The control API holds the TLS cert in memory; restart it to load the renewed one.

@@ -837,7 +837,12 @@ PYEOF
 [Service]
 ExecStart=
 ExecStart=/usr/bin/dnsdist --supervised -C /etc/dnsdist/dnsdist.conf
-ExecReload=/bin/kill -HUP $MAINPID
+# dnsdist has no signal-based config reload — SIGHUP makes it EXIT. Disable the
+# HUP reload (so a stray `systemctl reload` can't kill it) and apply config via
+# restart instead. Restart=always also recovers from OOM on small hosts.
+ExecReload=
+Restart=always
+RestartSec=3
 LimitNOFILE=65535
 EOF
 
@@ -1951,7 +1956,7 @@ proxy_domain() {
             echo "gfwList:add(newDNSName(\"${domain}\"))" >> "$lua"
         fi
     fi
-    systemctl reload dnsdist 2>/dev/null || systemctl restart dnsdist 2>/dev/null || true
+    systemctl restart dnsdist 2>/dev/null || true   # dnsdist can't hot-reload; restart applies config
     ok "Domain '${domain}' -> ${target}  (hijack: $([[ "$target" == direct ]] && echo off || echo on))"
     regen_smart
 }
@@ -2337,7 +2342,7 @@ force_renew_cert() {
     fi
 
     if systemctl is-active --quiet dnsdist; then
-        systemctl reload dnsdist && ok "Certificate renewed and dnsdist reloaded"
+        systemctl restart dnsdist && ok "Certificate renewed and dnsdist reloaded"
     else
         systemctl start dnsdist && ok "Certificate renewed and dnsdist started"
     fi

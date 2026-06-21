@@ -358,22 +358,12 @@ ensure_dnsdist_active() {
     fi
 }
 
-echo "[*] Reloading dnsdist..."
+# dnsdist has no signal-based config reload (SIGHUP makes it EXIT), so apply the
+# new rules by restarting it.
+echo "[*] Restarting dnsdist to apply rules..."
 if systemctl is-active --quiet dnsdist; then
-    if systemctl reload dnsdist 2>/dev/null; then
-        echo "[OK]   dnsdist reloaded via systemd"
-        ensure_dnsdist_active
-    else
-        echo "[!]    systemd reload failed, using SIGHUP..."
-        DNSDIST_PID=$(pgrep -x dnsdist 2>/dev/null || true)
-        if [[ -n "${DNSDIST_PID}" ]]; then
-            kill -HUP "${DNSDIST_PID}" 2>/dev/null && echo "[OK]   dnsdist reloaded via SIGHUP"
-            ensure_dnsdist_active
-        else
-            echo "[!]    Could not find dnsdist PID, restarting..."
-            systemctl restart dnsdist
-        fi
-    fi
+    systemctl restart dnsdist && echo "[OK]   dnsdist restarted"
+    ensure_dnsdist_active
 else
     systemctl start dnsdist
 fi
