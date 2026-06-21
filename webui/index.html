@@ -99,7 +99,19 @@
   .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; display:inline-block; }
   .pill.on { color:var(--ok); border-color:var(--ok); }
   .pill.off { color:var(--bad); border-color:var(--bad); }
+  .pill.wait { color:var(--warn); border-color:var(--warn); }
   .pills { display:flex; flex-wrap:wrap; gap:6px; }
+
+  /* toast notifications (visible feedback on any section) */
+  #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:50;
+    bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
+    width:min(92vw,440px); pointer-events:none; }
+  .toast { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--acc);
+    border-radius:10px; padding:10px 12px; box-shadow:0 8px 28px rgba(0,0,0,.28); font-size:13px;
+    white-space:pre-wrap; word-break:break-word; pointer-events:auto; animation:tin .18s ease; }
+  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--bad); } .toast.wait { border-left-color:var(--warn); }
+  @keyframes tin { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:none;} }
+  button:disabled { opacity:.5; cursor:progress; }
 
   .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
   .exit:first-child { border-top:none; }
@@ -170,6 +182,7 @@
     <header class="topbar">
       <button class="hamb" onclick="toggleSidebar()">☰</button>
       <div class="title" id="secTitle">概览</div>
+      <span class="pill wait hide" id="busy">⏳ 处理中</span>
       <span class="pill on" id="connPill">●</span>
       <button onclick="refreshAll()" title="刷新">🔄</button>
     </header>
@@ -192,6 +205,7 @@
         <div class="card">
           <div class="row"><h2 class="grow">出口</h2><button onclick="checkExits()">🩺 检查连通性</button></div>
           <div id="exits"></div>
+          <div id="checkResult" style="margin-top:10px"></div>
         </div>
         <div class="card">
           <h2>添加出口</h2>
@@ -257,6 +271,7 @@
   </div>
 </div>
 <div id="scrim" class="scrim hide" onclick="closeSidebar()"></div>
+<div id="toasts"></div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -299,7 +314,21 @@ function toggleSidebar(){ const o=$("sidebar").classList.toggle("open"); $("scri
 function closeSidebar(){ $("sidebar").classList.remove("open"); $("scrim").classList.add("hide"); }
 function refreshAll(){ loadStatus(); loadTraffic(); loadRules(); }
 
-function log(msg){ const o=$("out"); const t=new Date().toLocaleTimeString(); o.textContent="["+t+"] "+msg+"\n"+o.textContent; }
+function toast(msg, type){
+  const c=$("toasts"); if(!c) return;
+  const d=document.createElement("div"); d.className="toast "+(type||""); d.textContent=msg;
+  c.appendChild(d);
+  while(c.children.length>4) c.firstChild.remove();
+  setTimeout(()=>{ d.style.transition="opacity .3s"; d.style.opacity="0"; setTimeout(()=>d.remove(),300); }, type==="bad"?6000:3500);
+}
+function log(msg){
+  const o=$("out"); const t=new Date().toLocaleTimeString(); o.textContent="["+t+"] "+msg+"\n"+o.textContent;
+  const first=String(msg).split("\n")[0];
+  const ty = first.startsWith("✅")?"ok" : first.startsWith("❌")?"bad" : first.startsWith("⏳")?"wait" : "";
+  toast(first, ty);
+}
+let BUSY=0;
+function busy(on){ BUSY=Math.max(0,BUSY+(on?1:-1)); const b=$("busy"); if(b) b.classList.toggle("hide", BUSY<=0); }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
   $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
@@ -322,7 +351,7 @@ async function api(path, method, body) {
 // connection on this small box) is NOT treated as failure — we reload and show
 // the real state. Genuine validation errors return fast JSON and still surface.
 async function mutate(path, body, label, reload) {
-  log("⏳ " + label + "…");
+  log("⏳ " + label + "…"); busy(true);
   try {
     const r = await api(path, "POST", body);
     log((r.ok ? "✅ " : "❌ ") + label + (r.output ? "\n"+r.output : ""));
@@ -334,7 +363,7 @@ async function mutate(path, body, label, reload) {
       if (reload) reload();
     } else { log("❌ " + label + "：" + e.message); }
     return false;
-  }
+  } finally { busy(false); }
 }
 function refreshState(){ loadStatus(); loadRules(); }
 
@@ -473,8 +502,26 @@ async function addExit(){
   const ok=await mutate("/api/exits/add",{name,config},"添加出口 "+name, loadStatus);
   if(ok){ $("ex_name").value=""; $("ex_cfg").value=""; }
 }
-async function checkExits(){ log("⏳ 检查连通性…"); try{ const r=await api("/api/exits/check","POST",{});
-  log("🩺 出口连通性：\n"+(r.exits||[]).map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n")); }catch(e){ log("❌ 检查连通性："+e.message);} }
+async function checkExits(){
+  log("⏳ 检查出口连通性…"); busy(true);
+  $("checkResult").innerHTML = `<div class="muted small">检查中…</div>`;
+  try{
+    const r=await api("/api/exits/check","POST",{});
+    const items=r.exits||[];
+    const bad=items.filter(x=>x.state!=="UP").length;
+    $("checkResult").innerHTML = items.length ? items.map(x=>{
+      const cls = x.state==="UP"?"on":(x.state==="DOWN"?"off":"");
+      return `<div class="exit"><span class="name grow">${esc(x.name)}</span>`+
+        `<span class="meta">${esc(x.server||"")}</span>`+
+        `<span class="pill ${cls}">${esc(x.state)}</span></div>`;
+    }).join("") : `<div class="muted small">没有可检查的出口</div>`;
+    toast(bad ? ("🩺 "+bad+" 个出口不可达") : "🩺 全部出口在线", bad?"bad":"ok");
+    log("🩺 出口连通性：\n"+items.map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n"));
+  }catch(e){
+    $("checkResult").innerHTML = `<div class="muted small">检查失败</div>`;
+    log("❌ 检查连通性："+e.message);
+  }finally{ busy(false); }
+}
 function setPolicy(cat){ const tgt=$("pol_"+cat).value; mutate("/api/policy",{category:cat,target:tgt}, cat+" → "+tgt, loadStatus); }
 
 async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
