@@ -27,6 +27,10 @@ done
 for fn in 'def resources' 'cpu_percent' 'statvfs' 'uptime_sec' 'def read_net_dev' 'def traffic_tick' 'def traffic_loop'; do
     [[ "${api_body}" == *"${fn}"* ]] || fail "API missing: ${fn}"
 done
+# exit latency (ping -> tcp fallback) + 24h history
+for fn in 'def ping_ms' 'def tcp_ms' 'def measure_latency' 'def latency_tick' '/api/latency' '/api/exits/latency'; do
+    [[ "${api_body}" == *"${fn}"* ]] || fail "API missing latency: ${fn}"
+done
 # same backend as the bot -> in sync
 [[ "${api_body}" == *'proxy-gateway-ctl'* ]] || fail "API must shell out to proxy-gateway-ctl (shared backend)"
 # CORS so a web page hosted elsewhere can call it
@@ -61,5 +65,7 @@ web="$(cat "${here}/webui/index.html")"
 # panel: edit a rule + create/rename/delete rule groups
 [[ "${web}" == *'editRule'* && "${web}" == *'/api/rules/edit'* ]] || fail "web panel must support editing a rule"
 [[ "${web}" == *'createGroup'* && "${web}" == *'renameGroup'* && "${web}" == *'delGroup'* ]] || fail "web panel must manage rule groups"
+# panel: per-exit latency + 24h latency chart
+[[ "${web}" == *'loadExitLatency'* && "${web}" == *'latPill'* && "${web}" == *'drawLatency'* && "${web}" == *'latChart'* ]] || fail "web panel must show exit latency + chart"
 
 echo "api control surface OK"

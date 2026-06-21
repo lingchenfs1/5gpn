@@ -23,6 +23,7 @@ import hmac
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import sys
@@ -47,6 +48,8 @@ WG_DIR = "/etc/wireguard"
 TRAFFIC_FILE = os.environ.get("TRAFFIC_FILE", CONF_DIR + "/traffic.json")
 TRAFFIC_INTERVAL = int(re.sub(r"\D", "", os.environ.get("TRAFFIC_INTERVAL", "300")) or "300")
 TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
+LATENCY_FILE = os.environ.get("LATENCY_FILE", CONF_DIR + "/latency.json")
+LATENCY_INTERVAL = TRAFFIC_INTERVAL
 
 EXIT_NAME_RE = re.compile(r"^[a-z0-9]{1,11}$")
 CAT_RE = re.compile(r"^[A-Za-z0-9_一-鿿-]{1,40}$")
@@ -308,6 +311,111 @@ def traffic_loop():
             pass
 
 
+# --- exit latency (ICMP ping, falling back to TCP-ping) + 24h history --------
+_lat_lock = threading.Lock()
+
+
+def exit_endpoint(name):
+    """(host, port) of an exit's upstream node, or (None, None)."""
+    t = read_file(EXITS_DIR + "/%s.type" % name).strip()
+    if t in ("socks", "shadowsocks"):
+        try:
+            o = json.load(open(EXITS_DIR + "/%s.json" % name))["outbounds"][0]
+            return o.get("server"), int(o.get("server_port") or 0)
+        except Exception:  # noqa: BLE001
+            return None, None
+    m = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+):(\d+)\s*$", read_file(WG_DIR + "/pgw-%s.conf" % name))
+    if m:
+        return m.group(1), int(m.group(2))
+    return None, None
+
+
+def ping_ms(host):
+    ok, out = run(["ping", "-n", "-c", "1", "-W", "1", host], timeout=4)
+    if ok:
+        m = re.search(r"time[=<]\s*([\d.]+)\s*ms", out)
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def tcp_ms(host, port):
+    try:
+        t0 = time.monotonic()
+        s = socket.create_connection((host, port), timeout=3)
+        s.close()
+        return (time.monotonic() - t0) * 1000.0
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def measure_latency(name):
+    host, port = exit_endpoint(name)
+    if not host:
+        return {"ms": None, "method": None}
+    p = ping_ms(host)
+    if p is not None:
+        return {"ms": round(p, 1), "method": "icmp"}
+    if port:
+        t = tcp_ms(host, port)
+        if t is not None:
+            return {"ms": round(t, 1), "method": "tcp"}
+    return {"ms": None, "method": None}
+
+
+def all_latency():
+    names = [e["name"] for e in list_exits()[0]]
+    res = {}
+    threads = []
+
+    def work(n):
+        res[n] = measure_latency(n)
+    for n in names:
+        th = threading.Thread(target=work, args=(n,))
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(timeout=8)
+    return res
+
+
+def _load_latency():
+    try:
+        return json.load(open(LATENCY_FILE))
+    except Exception:  # noqa: BLE001
+        return {"interval_sec": LATENCY_INTERVAL, "points": []}
+
+
+def _save_latency(data):
+    try:
+        tmp = LATENCY_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, LATENCY_FILE)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def latency_tick():
+    res = all_latency()
+    with _lat_lock:
+        data = _load_latency()
+        v = {n: res[n]["ms"] for n in res}   # ms, or None on timeout
+        data.setdefault("points", []).append({"t": int(time.time()), "v": v})
+        data["points"] = data["points"][-TRAFFIC_MAX:]
+        data["interval_sec"] = LATENCY_INTERVAL
+        _save_latency(data)
+
+
+def latency_loop():
+    while True:
+        try:
+            latency_tick()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(LATENCY_INTERVAL)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
@@ -373,6 +481,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "now": int(time.time()),
                                     "interval_sec": data.get("interval_sec", TRAFFIC_INTERVAL),
                                     "series": series, "points": pts})
+        if path == "/api/latency":
+            with _lat_lock:
+                data = _load_latency()
+            cutoff = int(time.time()) - 24 * 3600
+            pts = [p for p in data.get("points", []) if p.get("t", 0) >= cutoff]
+            series = sorted({k for p in pts for k in p.get("v", {})})
+            return self._send(200, {"ok": True, "now": int(time.time()),
+                                    "interval_sec": data.get("interval_sec", LATENCY_INTERVAL),
+                                    "series": series, "points": pts})
+        if path == "/api/exits/latency":
+            return self._send(200, {"ok": True, "latency": all_latency()})
         if path == "/api/exits":
             exits, cur = list_exits()
             return self._send(200, {"ok": True, "current": cur, "exits": exits})
@@ -519,6 +638,7 @@ def main():
         sys.stderr.write("TLS cert load failed (%s / %s): %s\n" % (CERT, KEY, e))
         sys.exit(1)
     threading.Thread(target=traffic_loop, daemon=True).start()
+    threading.Thread(target=latency_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((BIND, PORT), Handler)
     httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
     sys.stderr.write("proxy-gateway-api listening on %s:%d (TLS)\n" % (BIND, PORT))
