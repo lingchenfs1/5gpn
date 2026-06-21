@@ -9,37 +9,53 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>5gpn 控制面板</title>
 <style>
+  /* ---- theme: dark (default) ---- */
   :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
-          --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623; }
+          --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623;
+          --input-bg:#11141a; --btn-bg:#222836; --btn-line:#2f3645; --shadow:none; }
+  /* light palette: applied on system-light (unless forced dark) and on forced light */
+  @media (prefers-color-scheme:light) {
+    :root:not([data-theme="dark"]) {
+      --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
+      --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
+      --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
+    --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
+    --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
+  }
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; }
   body { margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
-         -webkit-tap-highlight-color:transparent;
+         -webkit-tap-highlight-color:transparent; transition:background-color .2s ease, color .2s ease;
          font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
   .wrap { max-width:760px; margin:0 auto; padding:16px;
           padding-left:max(16px,env(safe-area-inset-left)); padding-right:max(16px,env(safe-area-inset-right));
           padding-bottom:max(16px,env(safe-area-inset-bottom)); }
   h1 { font-size:19px; margin:6px 0 16px; }
   h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.05em; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px;
+          box-shadow:var(--shadow); transition:background-color .2s ease, border-color .2s ease; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .row + .row { margin-top:8px; }
   input, textarea, select, button { font-family:inherit; font-size:16px; /* >=16px stops iOS zoom-on-focus */
-    color:var(--fg); background:#11141a; border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
+    color:var(--fg); background:var(--input-bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
   input, select { min-width:0; }
   input[type=text], input[type=password] { flex:1 1 200px; }
   select { min-height:44px; }
   textarea { width:100%; min-height:130px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; }
-  button { cursor:pointer; background:#222836; border-color:#2f3645; min-height:44px; padding:10px 16px;
-    touch-action:manipulation; transition:transform .05s ease; }
+  button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:44px; padding:10px 16px;
+    touch-action:manipulation; transition:transform .05s ease, background-color .2s ease, border-color .2s ease; }
   button:active { transform:scale(.97); }
   @media (hover:hover) { button:hover { border-color:var(--acc); } }
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
-  button.danger { border-color:#5a2a2a; color:#ff9b9b; }
+  button.danger { border-color:var(--bad); color:var(--bad); }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; }
-  .pill.on { color:var(--ok); border-color:#1f6b3a; }
-  .pill.off { color:var(--bad); border-color:#5a2a2a; }
+  .pill.on { color:var(--ok); border-color:var(--ok); }
+  .pill.off { color:var(--bad); border-color:var(--bad); }
   .exit { display:flex; align-items:center; gap:8px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
   .exit:first-child { border-top:none; }
   .exit .name { font-weight:600; }
@@ -47,7 +63,7 @@
   .grow { flex:1; }
   .muted { color:var(--mut); }
   .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
-  .bar { height:9px; background:#11141a; border-radius:6px; overflow:hidden; border:1px solid var(--line); }
+  .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--line); }
   .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
   #out { max-height:220px; overflow:auto; }
   #rulelist { max-height:300px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
@@ -65,6 +81,9 @@
   .small { font-size:12px; }
   .hide { display:none; }
   a { color:var(--acc); }
+  .head { display:flex; align-items:center; gap:8px; margin:6px 0 16px; }
+  .head h1 { flex:1; margin:0; }
+  #themeBtn { min-height:38px; padding:7px 12px; border-radius:999px; }
 
   /* ---- phones ---- */
   @media (max-width:560px) {
@@ -87,7 +106,10 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🛰️ 5gpn 控制面板</h1>
+  <div class="head">
+    <h1>🛰️ 5gpn 控制面板</h1>
+    <button id="themeBtn" onclick="cycleTheme()" title="切换主题">🌓 跟随</button>
+  </div>
 
   <div class="card">
     <h2>连接</h2>
@@ -181,6 +203,26 @@
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
 
+/* ---- theme (auto / light / dark) ---- */
+const THEMES = ["auto","light","dark"], THEME_ICON = {auto:"🌓 跟随", light:"☀️ 白天", dark:"🌙 夜间"};
+function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim() || "#888"; }
+function applyTheme(t){
+  if(t==="auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  const b=$("themeBtn"); if(b) b.textContent = THEME_ICON[t]||THEME_ICON.auto;
+  const m=document.querySelector('meta[name=theme-color]'); if(m) m.setAttribute("content", cssVar("--bg"));
+  if(typeof lastTraffic!=="undefined" && lastTraffic) drawChart(lastTraffic);
+}
+function cycleTheme(){
+  const cur=localStorage.getItem("pgw_theme")||"auto";
+  const next=THEMES[(THEMES.indexOf(cur)+1)%THEMES.length];
+  localStorage.setItem("pgw_theme", next); applyTheme(next);
+}
+applyTheme(localStorage.getItem("pgw_theme")||"auto");
+if(window.matchMedia) window.matchMedia("(prefers-color-scheme:light)").addEventListener("change", ()=>{
+  if((localStorage.getItem("pgw_theme")||"auto")==="auto") applyTheme("auto");
+});
+
 function log(msg, cls) {
   const o = $("out");
   const t = new Date().toLocaleTimeString();
@@ -265,7 +307,7 @@ function drawChart(d){
   series.forEach(s=>{lines[s]=[];totals[s]=0;});
   pts.forEach(p=>{ const v=p.v||{}; series.forEach(s=>{ if(v[s]){ const sum=v[s][0]+v[s][1];
     totals[s]+=sum; const r=sum*8/interval/1e6; lines[s].push([p.t,r]); if(r>maxR)maxR=r; }});});
-  g.strokeStyle="#262b36"; g.fillStyle="#9aa4b2"; g.font="10px sans-serif"; g.lineWidth=1;
+  g.strokeStyle=cssVar("--line"); g.fillStyle=cssVar("--mut"); g.font="10px sans-serif"; g.lineWidth=1;
   for(let i=0;i<=3;i++){ const y=y1-(y1-y0)*i/3; g.beginPath(); g.moveTo(x0,y); g.lineTo(x1,y); g.stroke();
     g.fillText(fmtRate(maxR*i/3),2,y+3); }
   for(let hh=0;hh<=24;hh+=6){ const x=x0+(x1-x0)*hh/24; g.fillText(hh===24?"现在":("-"+(24-hh)+"h"),x-10,H-4); }
