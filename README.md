@@ -175,8 +175,11 @@ http://your-domain.com:8111/ios-dot.mobileconfig
 ./install.sh --set-exit <名字|local>       # 切换出口（local = 本机直出）
 ./install.sh --del-exit <名字>             # 删除一个出口
 ./install.sh --setup-tgbot     # 配置/启用 Telegram 控制 Bot
+./install.sh --setup-api       # 启用 HTTP 控制 API + 网页面板（可选）
 ./install.sh --uninstall       # 卸载所有组件
 ```
+
+> 安装过程会**依次询问**是否启用 Telegram Bot 和 HTTP API/网页面板——都是**可选**的，留空/选 N 即跳过，默认安装行为不变。非交互式安装时，设 `API_SETUP=1`（或预设 `API_TOKEN`）即可一并启用 API。
 
 ## Telegram 控制 Bot（可选）
 

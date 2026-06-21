@@ -34,6 +34,9 @@ done
 [[ "${install_body}" == *'__TCP_PORTS__'* ]] || fail "firewall must templatize the allowed TCP ports"
 [[ "${install_body}" == *'.api_port'* ]] || fail "firewall must read the API port for persistence"
 [[ "${install_body}" == *'proxy-gateway-tgbot,proxy-gateway-api}'* ]] || fail "uninstall must remove the API unit"
+# optional in the main install flow (opt-in, default skip)
+[[ "${install_body}" == *'maybe_setup_api'* ]] || fail "install must offer the API as an optional step"
+[[ "${install_body}" == *'API_SETUP'* ]] || fail "API setup must be opt-in (API_SETUP / prompt)"
 
 # --- renew hook restarts the API (cert held in memory) ----------------------
 [[ "$(cat "${here}/renew-hook.sh")" == *'proxy-gateway-api'* ]] || fail "renew hook must restart the API"

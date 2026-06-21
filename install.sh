@@ -2047,6 +2047,24 @@ EOF
     warn "API 可控制出口/分流，务必保管好令牌；只用 HTTPS 访问。"
 }
 
+# Optional during the main install flow: enable the HTTP API/web panel only if
+# the user opts in (env API_SETUP=1 / API_TOKEN set, or an interactive yes).
+maybe_setup_api() {
+    local want="${API_SETUP:-}"
+    [[ -z "$want" && -n "${API_TOKEN:-}" ]] && want=1
+    if [[ -z "$want" && -t 0 ]]; then
+        echo ""
+        info "可选：启用 HTTP 控制 API + 网页面板（在网页上运维，与 Telegram Bot 实时同步）"
+        local ans; read -r -p "现在启用 API / 网页面板? [y/N]: " ans
+        case "$ans" in y|Y|yes|YES) want=1 ;; *) want=0 ;; esac
+    fi
+    if [[ "$want" == "1" ]]; then
+        setup_api
+    else
+        info "未启用 HTTP API（可选）。以后随时运行: $0 --setup-api"
+    fi
+}
+
 # =============================================================================
 # Low-memory Go runtime caps (drop-ins for the two Go proxies)
 # =============================================================================
@@ -2314,6 +2332,7 @@ main_install() {
     start_services
     setup_schedules
     setup_tgbot
+    maybe_setup_api
 
     echo ""
     echo "=========================================="
@@ -2344,6 +2363,7 @@ main_install() {
     echo "  $0 --add-exit <name> <wg.conf|socks5://...|ss://...>"
     echo "  $0 --set-exit <name|local>"
     echo "  $0 --setup-tgbot                 # 配置/启用 Telegram 控制 Bot"
+    echo "  $0 --setup-api                   # 启用 HTTP 控制 API + 网页面板（可选）"
     echo "  $0 --uninstall"
     echo "=========================================="
 }
