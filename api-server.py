@@ -965,6 +965,34 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"ok": False, "error": "not found"})
 
 
+class TLSServer(ThreadingHTTPServer):
+    """TLS terminates per-connection in the worker thread (NOT in the accept
+    loop). Wrapping the listening socket would run the handshake inside accept(),
+    so one stalled client (e.g. a port scanner on the public 8443) wedges the
+    whole server. Here accept() returns a plain socket and the handshake — with a
+    short timeout — happens in the request thread."""
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 64
+    ssl_ctx = None
+
+    def get_request(self):
+        return self.socket.accept()      # plain accept; no TLS here
+
+    def process_request_thread(self, request, client_address):  # runs in a thread
+        try:
+            request.settimeout(10)
+            request = self.ssl_ctx.wrap_socket(request, server_side=True)
+            request.settimeout(None)
+        except Exception:  # noqa: BLE001
+            try:
+                self.shutdown_request(request)
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        super().process_request_thread(request, client_address)
+
+
 def main():
     if not TOKEN or len(TOKEN) < 16:
         sys.stderr.write("API_TOKEN unset or too short (need >=16 chars); refusing to start.\n")
@@ -977,8 +1005,8 @@ def main():
         sys.exit(1)
     threading.Thread(target=traffic_loop, daemon=True).start()
     threading.Thread(target=latency_loop, daemon=True).start()
-    httpd = ThreadingHTTPServer((BIND, PORT), Handler)
-    httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    httpd = TLSServer((BIND, PORT), Handler)
+    httpd.ssl_ctx = ctx
     sys.stderr.write("proxy-gateway-api listening on %s:%d (TLS)\n" % (BIND, PORT))
     sys.stderr.flush()
     try:
