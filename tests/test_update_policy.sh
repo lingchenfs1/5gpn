@@ -14,3 +14,5 @@ fail(){ echo "FAIL: $*"; exit 1; }
 # regen must be crash-isolated (subshell) so a generator error can't abort mid-update
 [[ "$body" == *'( regen_smart )'* ]] || fail "regen_smart must run in a subshell during update"
 echo "update policy OK"
+# an unknown flag must NOT run a full install (safety)
+[[ "$(cat "$here/install.sh")" == *'"")'*'main_install'* ]] || true

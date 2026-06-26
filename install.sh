@@ -2642,7 +2642,15 @@ case "${1:-}" in
     -h|--help|help)
         usage
         ;;
-    *)
+    "")
         main_install
+        ;;
+    *)
+        # An UNKNOWN flag must never silently trigger a full (re)install — that
+        # would stop services. Only a bare invocation (no args) installs.
+        err "未知选项: $1"
+        echo ""
+        usage
+        exit 1
         ;;
 esac
