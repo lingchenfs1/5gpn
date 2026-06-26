@@ -329,10 +329,18 @@ check_port_53() {
         proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
         warn "Port 53 is already in use by: $proc (PID: $pid)"
 
-        read -r -p "Stop and disable '$proc' to free port 53? [Y/n]: " confirm
-        if [[ "$confirm" =~ ^[Nn]$ ]]; then
-            err "Port 53 must be free for dnsdist to start. Aborting."
-            exit 1
+        # Only prompt when attached to a TTY. Non-interactive installs
+        # (bash <(curl ...), curl | bash, automation) auto-free it — otherwise the
+        # read hits EOF and, under `set -e`, would abort the whole install.
+        if [[ -t 0 ]]; then
+            local confirm=""
+            read -r -p "Stop and disable '$proc' to free port 53? [Y/n]: " confirm || confirm=""
+            if [[ "$confirm" =~ ^[Nn]$ ]]; then
+                err "Port 53 must be free for dnsdist to start. Aborting."
+                exit 1
+            fi
+        else
+            info "Non-interactive: automatically freeing port 53 (owned by $proc)."
         fi
 
         stop_port53_owner "$pid" "$proc"
@@ -373,6 +381,14 @@ stop_port53_owner() {
             info "Stopping systemd-resolved service to release DNS stub port 53"
             systemctl stop systemd-resolved.service 2>/dev/null || true
             systemctl disable systemd-resolved.service 2>/dev/null || true
+            # /etc/resolv.conf was a symlink to the resolved stub (127.0.0.53);
+            # with resolved gone the box would lose DNS. Point it at real resolvers
+            # so cert issuance / rule updates / lookups keep working.
+            if [[ -L /etc/resolv.conf || ! -s /etc/resolv.conf ]] || grep -q '127.0.0.53' /etc/resolv.conf 2>/dev/null; then
+                rm -f /etc/resolv.conf
+                printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+                info "Wrote a static /etc/resolv.conf (1.1.1.1, 8.8.8.8)"
+            fi
             ;;
         dnsmasq)
             systemctl stop dnsmasq.service 2>/dev/null || true
