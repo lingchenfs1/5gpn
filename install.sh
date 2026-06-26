@@ -189,6 +189,7 @@ Options:
                  TG_ADMIN_IDS env vars, or prompts interactively).
   --setup-api    Install/enable the HTTP control API (web panel). Token auto-
                  generated (or API_TOKEN env); port API_PORT (default 8443).
+  --update       原地升级到最新版(保留全部配置/出口/规则/令牌/证书,不卸载、不重装)
   --uninstall    Remove all installed components
   -ios          Regenerate iOS DoT profile and QR code
   -h, --help     Show this help
@@ -483,6 +484,14 @@ is_valid_domain() {
 }
 
 generate_domain() {
+    # On a re-run / update, reuse the previously-saved domain (no re-prompt).
+    if [[ -z "${DOMAIN:-}" ]]; then
+        local saved; saved="$(cat "${CONF_DIR}/.domain" 2>/dev/null || cat /etc/dnsdist/.domain 2>/dev/null || true)"
+        if [[ -n "$saved" ]] && is_valid_domain "$saved"; then
+            DOMAIN="$saved"
+            info "检测到已安装,复用已保存的域名: $DOMAIN"
+        fi
+    fi
     # Domain may be supplied non-interactively via the DOMAIN env var.
     if [[ -n "${DOMAIN:-}" ]]; then
         if ! is_valid_domain "$DOMAIN"; then
@@ -583,6 +592,20 @@ verify_domain_dns() {
 # =============================================================================
 install_cert() {
     local certbot_cmd certbot_cmd_force
+
+    # Re-run / update: if a still-valid cert exists (>30 days), keep it — don't
+    # re-issue (avoids Let's Encrypt rate limits). Just make sure dnsdist has a copy.
+    if [[ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]] && \
+       openssl x509 -checkend $((30*86400)) -noout -in "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" >/dev/null 2>&1; then
+        info "已有有效证书(剩余 >30 天),跳过证书申请。"
+        mkdir -p /etc/dnsdist/certs
+        cp "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" /etc/dnsdist/certs/fullchain.pem 2>/dev/null || true
+        cp "/etc/letsencrypt/live/${DOMAIN}/privkey.pem"  /etc/dnsdist/certs/privkey.pem  2>/dev/null || true
+        chown -R _dnsdist:_dnsdist /etc/dnsdist/certs/ 2>/dev/null || true
+        chmod 640 /etc/dnsdist/certs/*.pem 2>/dev/null || true
+        return 0
+    fi
+
     install_certbot_firewall_hooks
 
     # Normal issuance (first time) - no force-renewal to avoid rate limits
@@ -2266,6 +2289,87 @@ show_status() {
     echo "=========================================="
 }
 
+# In-place update: refresh program files to the latest version WITHOUT touching
+# any user config (rules, exits, policy, tokens, domain, cert). No uninstall, no
+# recompile, no re-prompt. Safe to run repeatedly.
+do_update() {
+    check_root
+    local SRC="${PGW_SRC_DIR:-/opt/5gpn}"
+
+    # Step A: fetch the latest source, then re-exec the FRESH install.sh's --update
+    # so the newest update logic runs (the running copy may be old).
+    if [[ "${PGW_UPDATE_FETCHED:-}" != "1" ]]; then
+        info "拉取最新版本..."
+        local tgz="/tmp/5gpn-src-$$.tgz"
+        if ! curl -fsSL "https://github.com/lingchenfs1/5gpn/archive/refs/heads/main.tar.gz" -o "$tgz" 2>/dev/null \
+             || ! gzip -t "$tgz" 2>/dev/null; then
+            rm -f "$tgz"; err "下载最新版本失败,已中止(未改动任何东西)。检查能否访问 github.com。"; exit 1
+        fi
+        mkdir -p "$SRC"
+        tar -xzf "$tgz" --strip-components=1 -C "$SRC" && rm -f "$tgz"
+        chmod +x "$SRC/install.sh" 2>/dev/null || true
+        ok "已获取最新版本,应用更新中..."
+        PGW_UPDATE_FETCHED=1 exec bash "$SRC/install.sh" --update
+    fi
+
+    # Step B: running from the freshly-downloaded tree (SCRIPT_DIR = $SRC).
+    local DOMAIN; DOMAIN="$(cat "${CONF_DIR}/.domain" 2>/dev/null || cat /etc/dnsdist/.domain 2>/dev/null || true)"
+    if [[ -z "$DOMAIN" ]]; then
+        err "未检测到已安装的 5gpn(无已保存域名)。请改用正常安装。"; exit 1
+    fi
+    info "原地更新 5gpn(域名 ${DOMAIN};配置 / 出口 / 规则 / 令牌 / 证书 全部保留)..."
+
+    # safety backup of all config
+    local ts bk; ts="$(date +%Y%m%d-%H%M%S)"; bk="${BASE_DIR}/backups"; mkdir -p "$bk"
+    tar czf "$bk/preupdate-$ts.tar.gz" -C / etc/proxy-gateway opt/proxy-gateway/etc 2>/dev/null || true
+    ok "已备份当前配置: $bk/preupdate-$ts.tar.gz"
+
+    ensure_proxy_user
+    # 1) management entrypoint + generators + apply-helper + exit unit + default rules
+    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/proxy-gateway-ctl"
+    ( setup_exit_switching ) >/dev/null 2>&1 || true
+    ( install_singbox_unit ) >/dev/null 2>&1 || true
+    # 2) control-plane scripts — only refresh if that service is installed
+    if systemctl list-unit-files 2>/dev/null | grep -q '^proxy-gateway-tgbot'; then
+        [[ -f "${SCRIPT_DIR}/tgbot.py" ]] && install -m 0755 "${SCRIPT_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
+    fi
+    if systemctl list-unit-files 2>/dev/null | grep -q '^proxy-gateway-api'; then
+        [[ -f "${SCRIPT_DIR}/api-server.py" ]] && install -m 0755 "${SCRIPT_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
+        [[ -f "${SCRIPT_DIR}/webui/index.html" ]] && { mkdir -p "${BASE_DIR}/webui"; install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"; }
+    fi
+    # 3) rule updater + dnsdist template + cert renew hook
+    [[ -f "${SCRIPT_DIR}/update-rules.sh" ]] && install -m 0755 "${SCRIPT_DIR}/update-rules.sh" /usr/local/bin/update-dnsdist-rules.sh
+    [[ -f "${SCRIPT_DIR}/dnsdist.conf.template" ]] && cp "${SCRIPT_DIR}/dnsdist.conf.template" /etc/dnsdist/dnsdist.conf.template
+    if [[ -f "${SCRIPT_DIR}/renew-hook.sh" ]]; then
+        mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+        install -m 0755 "${SCRIPT_DIR}/renew-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/99-reload-dnsdist.sh
+    fi
+    # 4) dnsdist drop-in: no SIGHUP reload (it would kill dnsdist) + auto-restart
+    mkdir -p /etc/systemd/system/dnsdist.service.d
+    cat > /etc/systemd/system/dnsdist.service.d/override.conf <<'DROPIN'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dnsdist --supervised -C /etc/dnsdist/dnsdist.conf
+ExecReload=
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+DROPIN
+    systemctl daemon-reload
+    # 5) regenerate derived config FROM EXISTING user config (no user data touched)
+    info "重建 dnsdist 配置与智能路由(沿用现有规则/出口/分类)..."
+    /usr/local/bin/update-dnsdist-rules.sh >/dev/null 2>&1 || warn "规则刷新有告警(dnsdist 仍在运行)"
+    [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) >/dev/null 2>&1 || warn "智能路由重建有告警(原配置保留)"; }
+    # 6) restart control services + re-apply the active exit
+    systemctl restart proxy-gateway-api 2>/dev/null || true
+    systemctl restart proxy-gateway-tgbot 2>/dev/null || true
+    [[ -x /usr/local/bin/proxy-gateway-apply-exit.sh ]] && /usr/local/bin/proxy-gateway-apply-exit.sh >/dev/null 2>&1 || true
+
+    echo ""
+    ok "更新完成 ✅ 所有配置已保留,组件已刷新到最新版并重启。"
+    echo "  当前出口: $(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local) | 回滚备份: $bk/preupdate-$ts.tar.gz"
+}
+
 do_uninstall() {
     warn "This will remove sniproxy, quic-proxy, china-dns-race-proxy, dnsdist configs, and rules."
     read -r -p "Are you sure? [y/N]: " confirm
@@ -2525,6 +2629,9 @@ case "${1:-}" in
     --setup-api)
         check_root
         setup_api
+        ;;
+    --update)
+        do_update
         ;;
     --uninstall)
         do_uninstall
