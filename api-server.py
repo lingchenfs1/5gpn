@@ -798,6 +798,16 @@ class Handler(BaseHTTPRequestHandler):
             ok, out = ctl("--add-exit", name, inp=cfg, timeout=200)
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
 
+        if path == "/api/exits/edit":
+            name = str(b.get("name", "")).strip()
+            cfg = b.get("config", "")
+            if not EXIT_NAME_RE.match(name) or name in ("local", "smart"):
+                return self._send(400, {"ok": False, "error": "invalid name"})
+            if not isinstance(cfg, str) or not cfg.strip():
+                return self._send(400, {"ok": False, "error": "empty config"})
+            ok, out = ctl("--edit-exit", name, inp=cfg, timeout=300)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
         if path == "/api/exits/del":
             name = str(b.get("name", "")).strip()
             if not EXIT_NAME_RE.match(name):

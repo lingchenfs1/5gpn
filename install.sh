@@ -165,6 +165,9 @@ Options:
                  Register an egress exit. Accepts a WireGuard client config
                  (file/stdin/paste) OR a SOCKS5 / Shadowsocks(2022) URI. The
                  socks/ss types use a sing-box TUN engine (auto-installed).
+  --edit-exit <name>
+                 Modify an existing exit: reads the new config on stdin,
+                 overwrites it, then rebuilds and re-applies so it takes effect.
   --set-exit <name|local|smart>
                  Switch proxy egress to <name>, 'local' for direct egress, or
                  'smart' for rule-based per-domain routing (see --set-rules).
@@ -1729,6 +1732,27 @@ add_exit() {
     info "Activate it with: $0 --set-exit $name"
 }
 
+# Modify an existing exit: overwrite its config (reads the new config on stdin),
+# then make the change take effect now — rebuild the smart router and, if this
+# exit is the active one, restart it. Safe: add_exit validates the new config
+# before replacing the old one, so a bad config aborts and keeps the old.
+edit_exit() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && { err "Usage: $0 --edit-exit <name>"; exit 1; }
+    [[ "$name" == "local" || "$name" == "smart" ]] && { err "'$name' is reserved"; exit 1; }
+    exit_exists "$name" || { err "Exit '$name' does not exist (use --add-exit to create it)"; exit 1; }
+    info "Modifying exit '$name' (config will be overwritten)..."
+    add_exit "$name"        # reads new config from stdin; validates before replacing
+    local cur="local"
+    [[ -f "${CONF_DIR}/current-exit" ]] && cur="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
+    [[ -f "${RULES_FILE}" ]] && regen_smart
+    if [[ "$cur" == "$name" ]]; then
+        info "Re-activating '$name' with the new config..."
+        set_exit "$name"
+    fi
+    ok "Exit '$name' modified."
+}
+
 del_exit() {
     local name="${1:-}"
     [[ -z "$name" ]] && { err "Usage: $0 --del-exit <name>"; exit 1; }
@@ -2580,6 +2604,10 @@ case "${1:-}" in
     --add-exit)
         check_root
         add_exit "${2:-}" "${3:-}"
+        ;;
+    --edit-exit)
+        check_root
+        edit_exit "${2:-}"
         ;;
     --del-exit)
         check_root

@@ -228,13 +228,16 @@
           <div id="exits"></div>
           <div id="checkResult" style="margin-top:10px"></div>
         </div>
-        <div class="card">
-          <h2>添加出口</h2>
+        <div class="card" id="ex_card">
+          <h2 id="ex_title">添加出口</h2>
           <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
           <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
 或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]
 密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea></div>
-          <div class="row"><button class="primary" onclick="addExit()">➕ 添加</button></div>
+          <div class="row">
+            <button class="primary" id="ex_btn" onclick="addExit()">➕ 添加</button>
+            <button id="ex_cancel" class="hide" onclick="cancelEditExit()">取消</button>
+          </div>
         </div>
       </section>
 
@@ -338,7 +341,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
-let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null;
+let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null, EDIT_EXIT = null;
 const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
 
 /* ---- theme (auto / light / dark) ---- */
@@ -573,6 +576,7 @@ function renderExits(exits, cur) {
       `<span class="meta grow">${esc(e.type)} ${esc(e.server||"")}</span>`+
       latPill(e.name)+
       (e.active?`<span class="pill on">使用中</span>`:`<button onclick="setExit('${esc(e.name)}')">切换</button>`)+
+      `<button onclick="editExit('${esc(e.name)}')">改</button>`+
       `<button class="danger" onclick="delExit('${esc(e.name)}')">删</button></div>`);
   });
   box.innerHTML = rows.join("");
@@ -629,10 +633,37 @@ function delGroup(cat){
 function setExit(name){ mutate("/api/exits/set",{name},"切换出口 "+name, loadStatus); }
 function delExit(name){ if(confirm("删除出口 "+name+" ?")) mutate("/api/exits/del",{name},"删除出口 "+name, loadStatus); }
 async function addExit(){
-  const name=$("ex_name").value.trim(), config=$("ex_cfg").value;
-  if(!name||!config.trim()){ log("请填写名字和配置"); return; }
+  const config=$("ex_cfg").value;
+  if(!config.trim()){ log("请填写配置"); return; }
+  if(EDIT_EXIT){
+    const ok=await mutate("/api/exits/edit",{name:EDIT_EXIT,config},"修改出口 "+EDIT_EXIT, loadStatus);
+    if(ok) cancelEditExit();
+    return;
+  }
+  const name=$("ex_name").value.trim();
+  if(!name){ log("请填写名字"); return; }
   const ok=await mutate("/api/exits/add",{name,config},"添加出口 "+name, loadStatus);
   if(ok){ $("ex_name").value=""; $("ex_cfg").value=""; }
+}
+function editExit(name){
+  EDIT_EXIT=name;
+  showSection("exits");
+  $("ex_name").value=name; $("ex_name").readOnly=true;
+  $("ex_cfg").value="";
+  $("ex_cfg").placeholder="粘贴出口「"+name+"」的新配置（完整 socks5:// / ss:// / WireGuard），将覆盖原配置";
+  $("ex_title").textContent="修改出口 "+name;
+  $("ex_btn").textContent="💾 保存修改";
+  $("ex_cancel").classList.remove("hide");
+  $("ex_card").scrollIntoView({behavior:"smooth",block:"start"});
+  $("ex_cfg").focus();
+}
+function cancelEditExit(){
+  EDIT_EXIT=null;
+  $("ex_name").readOnly=false; $("ex_name").value=""; $("ex_cfg").value="";
+  $("ex_cfg").placeholder="socks5://用户:密码@host:端口\n或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]\n密码含 @ : / # 等特殊字符直接一行原样粘贴即可";
+  $("ex_title").textContent="添加出口";
+  $("ex_btn").textContent="➕ 添加";
+  $("ex_cancel").classList.add("hide");
 }
 async function checkExits(){
   log("⏳ 检查出口连通性…"); busy(true);

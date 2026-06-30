@@ -14,7 +14,7 @@ python3 -m py_compile "${here}/api-server.py" || fail "api-server.py must compil
 [[ "${api_body}" == *'load_cert_chain'* ]] || fail "API must serve TLS"
 [[ "${api_body}" == *'len(TOKEN) < 16'* ]] || fail "API must refuse a missing/short token"
 for ep in '/api/health' '/api/status' '/api/exits/set' '/api/exits/add' '/api/exits/del' \
-          '/api/exits/check' '/api/policy' '/api/policy/del' '/api/policy/rename' \
+          '/api/exits/check' '/api/exits/edit' '/api/policy' '/api/policy/del' '/api/policy/rename' \
           '/api/rules' '/api/rules/add' '/api/rules/del' '/api/rules/edit' \
           '/api/update-rules' '/api/traffic'; do
     [[ "${api_body}" == *"${ep}"* ]] || fail "API missing endpoint: ${ep}"
@@ -88,4 +88,6 @@ web="$(cat "${here}/webui/index.html")"
 [[ "${web}" == *'routeTest'* && "${web}" == *'proxyDomain'* ]] || fail "web panel must have route tester + one-click proxy"
 [[ "${web}" == *'backupConfig'* && "${web}" == *'restoreConfig'* ]] || fail "web panel must have backup/restore"
 
+[[ "${install_body}" == *'edit_exit()'* && "${install_body}" == *'--edit-exit)'* ]] || fail "ctl must support edit-exit"
+[[ "${web}" == *'editExit'* && "${web}" == *'/api/exits/edit'* ]] || fail "panel must support editing an exit"
 echo "api control surface OK"
